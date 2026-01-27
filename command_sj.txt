@@ -1,0 +1,881 @@
+================================================================================
+                    Pensieve Server Setup & Execution Guide
+          Stateful LLM Serving with KV Cache Management (EuroSys 2025)
+================================================================================
+
+## PART 1: Environment Setup & Prerequisites
+================================================================================
+
+# 1.1 Check system information
+echo "=== System Information ==="
+uname -a
+nvidia-smi  # Check GPU availability and CUDA version
+python --version
+pip --version
+
+# 1.2 Verify CUDA is available (required for GPU inference)
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
+
+# 1.3 Check free GPU memory
+nvidia-smi --query-gpu=memory.free --format=csv,nounits
+
+
+## PART 2: Install Dependencies
+================================================================================
+
+# 2.1 Navigate to project directory
+cd /Users/sj/pensieve
+
+# 2.2 Create Python virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 2.3 Upgrade pip, setuptools, wheel
+pip install --upgrade pip setuptools wheel
+
+# 2.4 Install core dependencies
+pip install -r requirements.txt
+
+# 2.5 Verify installations
+python -c "import torch, transformers, numpy; print('All imports successful!')"
+
+# 2.6 Install Pensieve in development mode
+pip install -e .
+
+
+## PART 3: Download Models (First Time Only)
+================================================================================
+
+# 3.1 Pre-download models to avoid network issues during inference
+# GPT-2 (smallest, fastest for testing)
+python -c "from transformers import GPT2Tokenizer, GPT2LMHeadModel; GPT2Tokenizer.from_pretrained('gpt2'); GPT2LMHeadModel.from_pretrained('gpt2'); print('GPT-2 downloaded')"
+
+# 3.2 Optional: Download larger models
+# OPT-125M (125M parameters)
+# python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; AutoTokenizer.from_pretrained('facebook/opt-125m'); AutoModelForCausalLM.from_pretrained('facebook/opt-125m'); print('OPT-125M downloaded')"
+
+# OPT-350M (350M parameters, ~2GB)
+# python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; AutoTokenizer.from_pretrained('facebook/opt-350m'); AutoModelForCausalLM.from_pretrained('facebook/opt-350m'); print('OPT-350M downloaded')"
+
+
+## PART 4: Run Basic Tests
+================================================================================
+
+# 4.1 Run basic inference test (verify everything works)
+python scripts/test_basic_inference.py
+
+# Expected output: All 5 tests should pass
+
+
+## PART 5: Run Pensieve Server - Main Demonstrations
+================================================================================
+
+# 5.1 BASIC DEMO: Simple multi-turn conversation (Pensieve mode)
+echo "=== Running Pensieve Demo ==="
+python main.py --mode pensieve --model gpt2 --max-new-tokens 32
+
+# Expected output:
+# - Demo conversations with session IDs
+# - Statistics showing GPU/CPU cache usage
+# - Timing information
+
+
+# 5.2 BASELINE COMPARISON: Same demo with vLLM baseline (stateless)
+echo "=== Running vLLM Baseline Demo ==="
+python main.py --mode vllm --model gpt2 --max-new-tokens 32
+
+# Expected output:
+# - Same conversations but with stateless processing
+# - Should be slower due to recomputing history
+
+
+# 5.3 DIRECT COMPARISON: Run Pensieve vs vLLM side by side
+echo "=== Comparing Pensieve vs vLLM ==="
+python main.py --mode compare --model gpt2 --max-new-tokens 32
+
+# Expected output:
+# - Pensieve statistics
+# - vLLM baseline statistics
+# - Speedup ratio at the end
+# - Target: >1.5x speedup on turn 5+
+
+
+## PART 6: Interactive Mode - Multi-turn Conversation
+================================================================================
+
+# 6.1 Start interactive Pensieve session
+echo "=== Starting Interactive Pensieve Session ==="
+python main.py --mode pensieve --model gpt2 --interactive --max-new-tokens 20
+
+# Usage:
+# - Type: "Hello" <Enter>
+# - Type: "Tell me about AI" <Enter>
+# - Type: "What is machine learning?" <Enter>
+# - Type: "stats" <Enter> to see cache statistics
+# - Type: "exit" <Enter> to quit
+
+# Expected behavior:
+# - Turn 1: Fresh computation, slow
+# - Turn 2+: Faster due to cached history (Pensieve advantage)
+
+
+# 6.2 Compare with interactive vLLM baseline
+echo "=== Starting Interactive vLLM Session ==="
+python main.py --mode vllm --model gpt2 --interactive --max-new-tokens 20
+
+# Same interaction pattern
+# Expected: All turns similar speed (no cache reuse in stateless mode)
+
+
+## PART 7: Advanced Testing with Different Models
+================================================================================
+
+# 7.1 Test with OPT-125M (larger model, better cache benefits)
+echo "=== Testing with OPT-125M ==="
+python main.py --mode pensieve --model facebook/opt-125m --gpu-cache 40 --max-new-tokens 32
+
+# Expected: More visible speedup benefit
+
+# 7.2 Test with OPT-350M (larger still)
+# python main.py --mode pensieve --model facebook/opt-350m --gpu-cache 40 --max-new-tokens 32
+
+
+## PART 8: Custom Cache Configuration
+================================================================================
+
+# 8.1 Pensieve with custom cache sizes
+echo "=== Pensieve with Custom Cache Configuration ==="
+python main.py \
+  --mode pensieve \
+  --model gpt2 \
+  --gpu-cache 20 \
+  --cpu-cache 50 \
+  --max-new-tokens 32
+
+# 8.2 Pensieve with limited GPU cache (test eviction)
+echo "=== Testing Eviction with Limited GPU Cache ==="
+python main.py \
+  --mode pensieve \
+  --model gpt2 \
+  --gpu-cache 2 \
+  --cpu-cache 10 \
+  --max-new-tokens 32
+
+# Expected: Observe CPU cache utilization and eviction behavior
+
+
+## PART 9: Performance Profiling
+================================================================================
+
+# 9.1 Profile single turn
+echo "=== Single Turn Timing ==="
+python main.py --mode pensieve --model gpt2 --max-new-tokens 10
+
+# 9.2 Profile multiple sessions
+echo "=== Multiple Session Timing ==="
+python main.py --mode compare --model gpt2 --max-new-tokens 20
+
+# 9.3 Measure speedup at different turns (manual testing)
+# - Record time for turn 1 (no cache)
+# - Record time for turn 5 (with cache)
+# - Calculate speedup = time_turn1 / time_turn5
+
+
+## PART 10: Debugging & Analysis
+================================================================================
+
+# 10.1 Check GPU memory usage while running
+# In another terminal, run:
+watch -n 1 nvidia-smi
+
+# 10.2 Run with verbose output
+python -u main.py --mode pensieve --model gpt2 2>&1 | tee pensieve_output.log
+
+# 10.3 Run with profiling (Python profiler)
+python -m cProfile -s cumulative -o pensieve.prof main.py --mode pensieve --model gpt2
+python -c "import pstats; p = pstats.Stats('pensieve.prof'); p.sort_stats('cumulative').print_stats(30)"
+
+
+## PART 11: Batch Testing (Multiple Models & Configurations)
+================================================================================
+
+# 11.1 Create test results directory
+mkdir -p results
+
+# 11.2 Test Pensieve on different models
+echo "Testing Pensieve mode on multiple models..."
+for model in gpt2 facebook/opt-125m; do
+    echo "Testing $model..."
+    python main.py --mode pensieve --model $model --max-new-tokens 20 > results/pensieve_${model//\//_}.txt 2>&1
+done
+
+# 11.3 Test vLLM baseline on different models
+echo "Testing vLLM mode on multiple models..."
+for model in gpt2 facebook/opt-125m; do
+    echo "Testing $model..."
+    python main.py --mode vllm --model $model --max-new-tokens 20 > results/vllm_${model//\//_}.txt 2>&1
+done
+
+# 11.4 Compare results
+cat results/*.txt
+
+
+## PART 12: Expected Performance Benchmarks
+================================================================================
+
+# Expected results (from paper, OPT-13B):
+# - Single GPU throughput: 1.36x vs vLLM
+# - Turn 5 prefill speedup: 2.0x
+# - Turn 10 prefill speedup: 3.5x
+# - GPU cache hit rate: 70%
+# - CPU cache hit rate: 20%
+
+# Note: With GPT-2, speedup may be less visible due to:
+# - Small model size (less KV cache memory)
+# - Simple model architecture
+# Better results expected with OPT-13B or larger models
+
+
+## PART 13: Troubleshooting
+================================================================================
+
+# 13.1 If CUDA not available
+# Set CPU-only mode:
+export CUDA_VISIBLE_DEVICES=""
+python main.py --mode pensieve --device cpu --model gpt2
+
+# 13.2 If out of memory
+# Reduce cache sizes:
+python main.py --mode pensieve --gpu-cache 5 --cpu-cache 20 --model gpt2
+
+# 13.3 If model download fails
+# Clear cache and retry:
+rm -rf ~/.cache/huggingface/
+python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')"
+
+# 13.4 Check installation
+python -c "from pensieve.server import create_server; print('Pensieve installed correctly!')"
+
+
+## PART 14: Production-Ready Commands
+================================================================================
+
+# 14.1 Run Pensieve server (production)
+nohup python main.py \
+  --mode pensieve \
+  --model facebook/opt-350m \
+  --gpu-cache 40 \
+  --cpu-cache 100 \
+  --max-new-tokens 128 \
+  > pensieve_server.log 2>&1 &
+
+# Check logs:
+tail -f pensieve_server.log
+
+# 14.2 Monitor GPU usage while running
+# In another terminal:
+watch -n 1 'nvidia-smi --query-gpu=index,memory.used,memory.free,utilization.gpu,utilization.memory --format=csv,nounits'
+
+# 14.3 Kill server
+pkill -f "python main.py"
+
+
+## PART 15: Generate Documentation & Results
+================================================================================
+
+# 15.1 View full documentation
+cat README.md
+
+# 15.2 View implementation summary
+cat IMPLEMENTATION_SUMMARY.md
+
+# 15.3 Generate test report
+python main.py --mode compare --model gpt2 2>&1 | tee test_report.txt
+
+# 15.4 View project structure
+find src -type f -name "*.py" | head -20
+
+
+## PART 16: Clean Up & Reset
+================================================================================
+
+# 16.1 Clear cache (if needed for fresh testing)
+python -c "
+from pensieve.core import TwoTierCache
+cache = TwoTierCache()
+cache.reset()
+print('Cache cleared')
+"
+
+# 16.2 Remove generated logs and profiles
+rm -f *.log *.prof pensieve_output.log
+
+# 16.3 Remove downloaded models (if needed to save disk space)
+# WARNING: This will require re-downloading on next run
+# rm -rf ~/.cache/huggingface/hub/
+
+
+================================================================================
+                            QUICK START COMMANDS
+================================================================================
+
+# Fastest start (just wants to see it work):
+cd /Users/sj/pensieve
+pip install -r requirements.txt
+pip install -e .
+python main.py --mode compare --model gpt2
+
+# To run interactive demo:
+python main.py --mode pensieve --interactive --model gpt2
+
+# To run performance comparison:
+python main.py --mode compare --model gpt2 --max-new-tokens 50
+
+# To profile with larger model:
+python main.py --mode pensieve --model facebook/opt-125m --max-new-tokens 32
+
+
+================================================================================
+                          ENVIRONMENT VARIABLES
+================================================================================
+
+# Set GPU device
+export CUDA_VISIBLE_DEVICES=0
+
+# Set max tokens to generate
+export MAX_NEW_TOKENS=32
+
+# Run on CPU only (if no GPU)
+export CUDA_VISIBLE_DEVICES=""
+
+# Python warnings
+export PYTHONWARNINGS="ignore"
+
+
+================================================================================
+                            FILE LOCATIONS
+================================================================================
+
+Project root: /Users/sj/pensieve/
+
+Key files:
+- main.py                           # Entry point
+- src/pensieve/server/server.py     # Server implementation
+- src/pensieve/core/cache.py        # KVCache implementation
+- src/pensieve/core/eviction.py     # Eviction policy
+- README.md                          # Full documentation
+- requirements.txt                   # Dependencies
+
+Generated files:
+- pensieve_server.log               # Server logs
+- test_report.txt                   # Test results
+- results/                          # Benchmark results
+- *.prof                            # Profiling data
+
+
+================================================================================
+                            EXAMPLE WORKFLOW
+================================================================================
+
+# Complete workflow from setup to testing:
+
+1. Environment setup:
+   cd /Users/sj/pensieve
+   python --version  # Check Python 3.10+
+   nvidia-smi        # Check GPU
+
+2. Install dependencies:
+   pip install -r requirements.txt
+   pip install -e .
+
+3. Download models:
+   python -c "from transformers import GPT2Tokenizer, GPT2LMHeadModel; GPT2Tokenizer.from_pretrained('gpt2'); GPT2LMHeadModel.from_pretrained('gpt2')"
+
+4. Run basic test:
+   python scripts/test_basic_inference.py
+
+5. Run Pensieve demo:
+   python main.py --mode pensieve --model gpt2
+
+6. Run vLLM baseline:
+   python main.py --mode vllm --model gpt2
+
+7. Compare both:
+   python main.py --mode compare --model gpt2
+
+8. Interactive testing:
+   python main.py --mode pensieve --interactive --model gpt2
+
+9. Performance profiling:
+   python -m cProfile -s cumulative main.py --mode pensieve --model gpt2
+
+10. View statistics:
+    tail -f pensieve_server.log
+
+
+================================================================================
+Notes:
+- Ensure GPU has at least 8GB memory
+- First model download may take time (cached afterwards)
+- See README.md for detailed documentation
+- See IMPLEMENTATION_SUMMARY.md for architecture details
+================================================================================
+
+
+================================================================================
+                    PHASE 4 IMPLEMENTATION TESTING
+                 (Batch Scheduler, Worker, Attention Kernel)
+================================================================================
+
+## PART 17: Test Batch Scheduler & Worker
+================================================================================
+
+# 17.1 Test batch scheduler formation
+python << 'EOF'
+from pensieve.scheduler import BatchScheduler
+from pensieve.core import TwoTierCache, Request, Phase
+import torch
+
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+scheduler = BatchScheduler(cache, max_batch_size=8)
+
+# Add some requests
+for i in range(3):
+    req = Request(
+        session_id=f"session_{i}",
+        request_id=f"req_{i}",
+        input_ids=torch.tensor([1, 2, 3, 4, 5]),
+        phase=Phase.PREFILL,
+    )
+    scheduler.add_request(req)
+
+# Form a batch
+batch, cache_plan = scheduler.form_next_batch()
+
+print(f"Batch size: {batch.num_requests}")
+print(f"Prefill requests: {len(batch.get_prefill_requests())}")
+print(f"Cache swaps planned: {len(cache_plan.chunks_to_swap_in)}")
+
+EOF
+
+# Expected output:
+# - Batch size: 3
+# - Prefill requests: 3
+# - Cache swaps planned: 0 (no cached data yet)
+
+
+# 17.2 Test worker execution with custom cache
+python << 'EOF'
+from pensieve.scheduler import BatchScheduler
+from pensieve.worker import Worker
+from pensieve.core import TwoTierCache, Request, Phase
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+# Load small model for testing
+print("Loading model...")
+model = AutoModelForCausalLM.from_pretrained('gpt2')
+tokenizer = AutoTokenizer.from_pretrained('gpt2')
+tokenizer.pad_token = tokenizer.eos_token
+
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+scheduler = BatchScheduler(cache, max_batch_size=4)
+worker = Worker(model, tokenizer, cache, device='cuda:0')
+
+# Create a batch
+req = Request(
+    session_id="test_session",
+    request_id="test_req_1",
+    input_ids=torch.tensor([100, 200]),  # Dummy token IDs
+    phase=Phase.PREFILL,
+)
+scheduler.add_request(req)
+
+batch, cache_plan = scheduler.form_next_batch()
+
+print(f"\nBatch info: {scheduler.get_batch_info_dict(batch)}")
+print(f"Cache plan: swap_in={len(cache_plan.chunks_to_swap_in)}, swap_out={len(cache_plan.chunks_to_swap_out)}")
+
+# Execute batch
+print("Executing batch...")
+result = worker.execute_batch(batch, cache_plan)
+
+print(f"Execution time: {result.execution_time:.3f}s")
+print(f"Results: {result.request_results}")
+
+EOF
+
+# Expected output:
+# - Batch info: session_id, positions, etc.
+# - Execution time: ~1-2 seconds for GPT-2
+# - Results: generated tokens and response
+
+
+## PART 18: Test Multi-Token Attention Kernel
+================================================================================
+
+# 18.1 Verify attention kernel correctness
+python << 'EOF'
+from pensieve.kernels import verify_attention_correctness, multi_token_attention_pytorch
+import torch
+
+print("Testing multi-token attention kernel...")
+
+# Create test tensors
+batch_size, query_len, num_heads, head_dim = 2, 10, 8, 64
+num_chunks = 3
+chunk_size = 32
+
+query = torch.randn(batch_size, query_len, num_heads, head_dim, device='cuda:0')
+key_chunks = [torch.randn(batch_size, chunk_size, num_heads, head_dim, device='cuda:0') for _ in range(num_chunks)]
+value_chunks = [torch.randn(batch_size, chunk_size, num_heads, head_dim, device='cuda:0') for _ in range(num_chunks)]
+
+# Test correctness
+verify_attention_correctness(query, key_chunks, value_chunks)
+
+# Test with attention mask
+attention_mask = torch.ones(query_len, num_chunks * chunk_size, device='cuda:0')
+output = multi_token_attention_pytorch(query, key_chunks, value_chunks, attention_mask=attention_mask)
+
+print(f"Output shape: {output.shape}")
+print("✓ Attention kernel test passed")
+
+EOF
+
+# Expected output:
+# - Attention correctness check PASSED
+# - Output shape: torch.Size([2, 10, 8, 64])
+# - Attention kernel test passed
+
+
+# 18.2 Benchmark attention performance
+python << 'EOF'
+from pensieve.kernels import benchmark_attention
+
+print("Benchmarking attention kernel...")
+benchmark_attention(
+    query_len=32,
+    key_len=512,
+    batch_size=4,
+    num_chunks=4,
+    num_iters=50
+)
+
+EOF
+
+# Expected output:
+# - Query: 32 tokens, Batch: 4
+# - KV: 512 tokens, Chunks: 4
+# - Chunked: X.XX ms/iter
+# - Concatenated: Y.YY ms/iter
+# - Overhead: Z.Z%
+
+
+## PART 19: Test Pipelined Transfers
+================================================================================
+
+# 19.1 Test pipelined transfer performance
+python << 'EOF'
+from pensieve.pipeline import benchmark_pipelined_transfer
+
+print("Benchmarking pipelined transfers...")
+benchmark_pipelined_transfer(
+    num_transfers=10,
+    chunk_size_mb=50,
+    device='cuda:0'
+)
+
+EOF
+
+# Expected output:
+# - Pipelined Transfer Benchmark
+# - Sequential: X.XX ms
+# - Pipelined: Y.YY ms
+# - Speedup: Z.ZZx
+# - Overlap: W.W%
+# (Should see ~20-30% speedup with overlap)
+
+
+# 19.2 Test async transfer with cache
+python << 'EOF'
+from pensieve.pipeline import AsyncTransferTask, PipelinedTransferManager
+from pensieve.core import TwoTierCache, KVChunk, CacheLocation
+import torch
+import time
+
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+manager = PipelinedTransferManager(device='cuda:0')
+
+# Create test chunk on CPU
+test_tensor_k = torch.randn(1, 32, 8, 64, device='cpu')
+test_tensor_v = torch.randn(1, 32, 8, 64, device='cpu')
+
+chunk = KVChunk(
+    session_id='test_session',
+    chunk_id=0,
+    layer_idx=0,
+    key_tensor=test_tensor_k,
+    value_tensor=test_tensor_v,
+    context_length=0,
+    session_total_chunks=1,
+    num_layers=32,
+)
+
+# Store on CPU first
+cache.cpu_cache[chunk.key] = chunk
+cache.cpu_used_bytes += chunk.size_bytes
+
+print(f"Chunk on CPU: {chunk.key}")
+
+# Transfer asynchronously
+event = manager.swap_chunk_to_gpu_async(cache, chunk.key)
+
+# Wait for transfer
+if event:
+    event.wait()
+    print(f"Transfer complete: {chunk.key} now on GPU")
+
+EOF
+
+# Expected output:
+# - Chunk on CPU: test_session:chunk:0:layer:0
+# - Transfer complete: test_session:chunk:0:layer:0 now on GPU
+
+
+## PART 20: Test Dropped Token Recovery
+================================================================================
+
+# 20.1 Test recovery plan creation
+python << 'EOF'
+from pensieve.recovery import TokenRecoveryManager, RecoveryPlan
+from pensieve.core import TwoTierCache, Request, KVChunk, CacheLocation
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+model = AutoModelForCausalLM.from_pretrained('gpt2')
+tokenizer = AutoTokenizer.from_pretrained('gpt2')
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+
+recovery_mgr = TokenRecoveryManager(model, tokenizer, cache, device='cuda:0')
+
+# Create a request
+request = Request(
+    session_id='session_1',
+    request_id='req_1',
+    input_ids=torch.tensor([100, 200, 300]),
+    phase='PREFILL',
+)
+
+# Create recovery plan
+recovery_plan = recovery_mgr.create_recovery_plan(request)
+
+if recovery_plan:
+    print(f"Recovery needed: {len(recovery_plan.dropped_positions)} dropped chunks")
+    print(f"Tokens to recover: {len(recovery_plan.raw_tokens)}")
+else:
+    print("No recovery needed (no dropped chunks yet)")
+
+EOF
+
+# Expected output:
+# - No recovery needed (no dropped chunks yet)
+
+
+# 20.2 Test recovery cost estimation
+python << 'EOF'
+from pensieve.recovery import TokenRecoveryManager, RecoveryPlan
+from pensieve.core import TwoTierCache
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+model = AutoModelForCausalLM.from_pretrained('gpt2')
+tokenizer = AutoTokenizer.from_pretrained('gpt2')
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+
+recovery_mgr = TokenRecoveryManager(model, tokenizer, cache, device='cuda:0')
+
+# Create dummy recovery plan
+recovery_plan = RecoveryPlan(
+    dropped_positions=[0, 1, 2],
+    raw_tokens=torch.ones(96, dtype=torch.long),  # 3 chunks * 32 tokens
+    session_id='session_1'
+)
+
+cost = recovery_mgr.estimate_recovery_cost(recovery_plan)
+should_recover = recovery_mgr.should_recover(recovery_plan)
+
+print(f"Recovery cost: {cost:.4f}s")
+print(f"Should recover: {should_recover}")
+
+EOF
+
+# Expected output:
+# - Recovery cost: ~0.001s (very small for GPT-2)
+# - Should recover: True
+
+
+## PART 21: Full Phase 4 Integration Test
+================================================================================
+
+# 21.1 End-to-end Phase 4 test (scheduler + worker + attention + recovery)
+python << 'EOF'
+from pensieve.scheduler import BatchScheduler
+from pensieve.worker import Worker
+from pensieve.recovery import TokenRecoveryManager
+from pensieve.core import TwoTierCache, Request, Phase
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+import time
+
+print("=" * 60)
+print("Phase 4 End-to-End Integration Test")
+print("=" * 60)
+
+# Load model
+print("\n1. Loading model...")
+model = AutoModelForCausalLM.from_pretrained('gpt2')
+tokenizer = AutoTokenizer.from_pretrained('gpt2')
+tokenizer.pad_token = tokenizer.eos_token
+
+# Initialize components
+print("2. Initializing components...")
+cache = TwoTierCache(gpu_capacity_gb=32, cpu_capacity_gb=100)
+scheduler = BatchScheduler(cache, max_batch_size=4)
+worker = Worker(model, tokenizer, cache, device='cuda:0')
+recovery_mgr = TokenRecoveryManager(model, tokenizer, cache, device='cuda:0')
+
+# Create multi-turn requests
+print("3. Creating multi-turn conversation...")
+session_id = 'phase4_test'
+messages = [
+    "Hello, how are you?",
+    "What is machine learning?",
+    "Tell me about neural networks."
+]
+
+for turn, msg in enumerate(messages, 1):
+    print(f"\n--- Turn {turn}: {msg[:40]}... ---")
+
+    # Create request
+    input_ids = tokenizer.encode(msg, return_tensors='pt')[0]
+    request = Request(
+        session_id=session_id,
+        request_id=f"req_{turn}",
+        input_ids=input_ids,
+        phase=Phase.PREFILL,
+    )
+
+    # Check for recovery
+    recovery_plan = recovery_mgr.create_recovery_plan(request)
+    if recovery_plan:
+        print(f"  Recovering {len(recovery_plan.dropped_positions)} chunks...")
+        recovery_mgr.recompute_dropped_chunks(recovery_plan)
+
+    # Schedule request
+    scheduler.add_request(request)
+
+    # Form batch and execute
+    batch, cache_plan = scheduler.form_next_batch()
+    print(f"  Batch size: {batch.num_requests}")
+    print(f"  Cache swaps: in={len(cache_plan.chunks_to_swap_in)}, out={len(cache_plan.chunks_to_swap_out)}")
+
+    start = time.time()
+    result = worker.execute_batch(batch, cache_plan)
+    elapsed = time.time() - start
+
+    print(f"  Execution time: {elapsed:.3f}s")
+    print(f"  Cache stats: GPU={len(cache.gpu_cache)} chunks, CPU={len(cache.cpu_cache)} chunks")
+
+print("\n" + "=" * 60)
+print("✓ Phase 4 integration test completed successfully!")
+print("=" * 60)
+
+EOF
+
+# Expected output:
+# - All 3 turns process successfully
+# - Execution time decreases with turns (cache benefit)
+# - GPU cache grows, CPU cache empty (typical scenario)
+
+
+## PART 22: Performance Comparison (Phase 4 vs Earlier)
+================================================================================
+
+# 22.1 Compare single-turn performance
+python << 'EOF'
+from pensieve.server.server import create_server
+import time
+
+print("=" * 60)
+print("Single-Turn Performance Comparison")
+print("=" * 60)
+
+# Pensieve mode
+server = create_server(mode='pensieve', model_name='gpt2')
+start = time.time()
+response = server.process_request('session_1', 'Hello, what is AI?', max_new_tokens=20)
+time_pensieve = time.time() - start
+
+print(f"\nPensieve: {time_pensieve:.3f}s")
+print(f"Response: {response[:50]}...")
+
+# vLLM baseline
+server_baseline = create_server(mode='vllm', model_name='gpt2')
+start = time.time()
+response_baseline = server_baseline.process_request('session_1', 'Hello, what is AI?', max_new_tokens=20)
+time_baseline = time.time() - start
+
+print(f"\nvLLM: {time_baseline:.3f}s")
+print(f"Response: {response_baseline[:50]}...")
+
+# Both should be similar for turn 1 (no cache benefit yet)
+ratio = time_baseline / time_pensieve if time_pensieve > 0 else 0
+print(f"\nSpeedup: {ratio:.2f}x (expected ~1.0x for turn 1)")
+
+EOF
+
+# Expected output:
+# - Pensieve: ~1.5-2.0s (for GPT-2)
+# - vLLM: ~1.5-2.0s (similar, no cache yet)
+# - Speedup: ~1.0x (turn 1, no caching benefit)
+
+
+================================================================================
+                        VERIFICATION CHECKLIST
+================================================================================
+
+After Phase 4 implementation, verify:
+
+✓ Batch Scheduler:
+  - [ ] form_next_batch() returns Batch with correct requests
+  - [ ] create_cache_plan() identifies chunks to swap
+  - [ ] Request queue management works
+
+✓ Worker:
+  - [ ] execute_batch() runs without errors
+  - [ ] Cache swaps execute successfully
+  - [ ] New KV chunks are stored after generation
+  - [ ] Model outputs are correct
+
+✓ Multi-Token Attention:
+  - [ ] Attention output matches standard PyTorch
+  - [ ] Works with non-contiguous KV chunks
+  - [ ] Handles variable batch sizes
+
+✓ Pipelined Transfer:
+  - [ ] Async transfers complete successfully
+  - [ ] Transfer+compute overlap visible in benchmarks
+  - [ ] No data corruption or race conditions
+
+✓ Token Recovery:
+  - [ ] Dropped chunks detected correctly
+  - [ ] Recovery plan created properly
+  - [ ] Recomputed chunks stored in cache
+
+✓ Integration:
+  - [ ] Scheduler → Worker → Model pipeline works
+  - [ ] Cache statistics accurate
+  - [ ] No memory leaks or OOM errors
+  - [ ] Multi-turn conversation completes successfully
+
+================================================================================
