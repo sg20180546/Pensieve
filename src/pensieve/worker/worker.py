@@ -666,6 +666,10 @@ class Worker:
                         fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
                         fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
 
+                        # ✅ Move fill tensors to CPU to match last_chunk (which is stored in CPU)
+                        fill_key = fill_key.cpu()
+                        fill_value = fill_value.cpu()
+
                         # Concatenate with existing last chunk KV
                         merged_key = torch.cat(
                             [last_chunk.key_tensor, fill_key], dim=1
