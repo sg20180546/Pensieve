@@ -2,6 +2,8 @@
 
 import torch
 import time
+import logging
+import os
 from typing import Tuple, List, Dict, Optional
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
@@ -16,6 +18,18 @@ from pensieve.core.types import (
 )
 from pensieve.core.cache import TwoTierCache
 from pensieve.worker.custom_cache import PensieveCacheFactory
+
+# Setup logging - control with PENSIEVE_DEBUG environment variable
+logger = logging.getLogger(__name__)
+_debug_enabled = os.getenv("PENSIEVE_DEBUG", "0") == "1"
+if _debug_enabled:
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('[DEBUG] %(message)s'))
+    if not logger.handlers:  # Avoid duplicate handlers
+        logger.addHandler(handler)
+else:
+    logger.setLevel(logging.WARNING)
 
 
 class Worker:
@@ -321,7 +335,7 @@ class Worker:
             if session_past_kv and len(session_past_kv) > 0:
                 first_k, first_v = session_past_kv[0]
                 if first_k is not None:
-                    print(f"[DEBUG _custom_generate] Packed session_id={session_id}, req_idx={req_idx}, kv[0].shape={first_k.shape}")
+                    logger.debug(f"_custom_generate] Packed session_id={session_id}, req_idx={req_idx}, kv[0].shape={first_k.shape}")
 
         # Reconstruct sequences
         all_sequences = []
@@ -544,11 +558,11 @@ class Worker:
                         if isinstance(kv_data, tuple) and len(kv_data) == 2:
                             # Unpack (req_idx, session_kv)
                             req_idx, session_kv = kv_data
-                            print(f"[DEBUG _process_outputs] session_id={session_id}, req_idx={req_idx}, kv_data is tuple")
+                            logger.debug(f"_process_outputs] session_id={session_id}, req_idx={req_idx}, kv_data is tuple")
                             if session_kv:
                                 # ✅ Extract only this request's KV (batch_size=1)
                                 # session_kv is tuple of (k, v) for each layer
-                                # Each k, v has shape [batch, seq_len, heads, dim]
+                                # Each k, v has shape [batch, num_heads, seq_len, head_dim]
                                 # Extract k[req_idx:req_idx+1, ...], v[req_idx:req_idx+1, ...]
                                 session_kv_single = tuple(
                                     (
@@ -560,11 +574,11 @@ class Worker:
                                 # ✅ DEBUG: Print first layer shape after extraction
                                 first_k, first_v = session_kv_single[0]
                                 if first_k is not None:
-                                    print(f"[DEBUG _process_outputs] After extraction: first_k.shape={first_k.shape}, first_v.shape={first_v.shape}")
+                                    logger.debug(f"_process_outputs] After extraction: first_k.shape={first_k.shape}, first_v.shape={first_v.shape}")
                                 self._store_new_kv_chunks(batch, session_kv_single, session_id)
                         else:
                             # Fallback: assume it's direct KV
-                            print(f"[DEBUG _process_outputs] session_id={session_id}, kv_data is NOT tuple (type={type(kv_data)}), using fallback")
+                            logger.debug(f"_process_outputs] session_id={session_id}, kv_data is NOT tuple (type={type(kv_data)}), using fallback")
                             self._store_new_kv_chunks(batch, kv_data, session_id)
                 else:
                     # Fallback for old code path (shouldn't happen now)
@@ -671,13 +685,13 @@ class Worker:
 
                 # ✅ DEBUG: Print actual shapes to diagnose mismatch
                 if layer_idx == 0:
-                    print(f"[DEBUG] Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
-                    print(f"[DEBUG] num_generated={num_generated}, fill_last={fill_last}")
+                    logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
+                    logger.debug(f"num_generated={num_generated}, fill_last={fill_last}")
                     if fill_last > 0 and last_chunk_id >= 0:
                         last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
                         last_chunk = self.cache.get_chunk(last_chunk_key)
                         if last_chunk:
-                            print(f"[DEBUG] last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
+                            logger.debug(f"last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
 
                 # k, v shapes: [batch, num_heads, seq_len, head_dim]
                 # (HuggingFace format for some models/versions)
