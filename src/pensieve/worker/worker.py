@@ -317,6 +317,11 @@ class Worker:
 
             # ✅ Store final KV for this session (with request index for batch extraction)
             final_past_kv_per_session[session_id] = (req_idx, session_past_kv)
+            # ✅ DEBUG: Confirm tuple packing
+            if session_past_kv and len(session_past_kv) > 0:
+                first_k, first_v = session_past_kv[0]
+                if first_k is not None:
+                    print(f"[DEBUG _custom_generate] Packed session_id={session_id}, req_idx={req_idx}, kv[0].shape={first_k.shape}")
 
         # Reconstruct sequences
         all_sequences = []
@@ -539,6 +544,7 @@ class Worker:
                         if isinstance(kv_data, tuple) and len(kv_data) == 2:
                             # Unpack (req_idx, session_kv)
                             req_idx, session_kv = kv_data
+                            print(f"[DEBUG _process_outputs] session_id={session_id}, req_idx={req_idx}, kv_data is tuple")
                             if session_kv:
                                 # ✅ Extract only this request's KV (batch_size=1)
                                 # session_kv is tuple of (k, v) for each layer
@@ -551,9 +557,14 @@ class Worker:
                                     )
                                     for k, v in session_kv
                                 )
+                                # ✅ DEBUG: Print first layer shape after extraction
+                                first_k, first_v = session_kv_single[0]
+                                if first_k is not None:
+                                    print(f"[DEBUG _process_outputs] After extraction: first_k.shape={first_k.shape}, first_v.shape={first_v.shape}")
                                 self._store_new_kv_chunks(batch, session_kv_single, session_id)
                         else:
                             # Fallback: assume it's direct KV
+                            print(f"[DEBUG _process_outputs] session_id={session_id}, kv_data is NOT tuple (type={type(kv_data)}), using fallback")
                             self._store_new_kv_chunks(batch, kv_data, session_id)
                 else:
                     # Fallback for old code path (shouldn't happen now)
@@ -658,6 +669,16 @@ class Worker:
                 if k is None or v is None:
                     continue
 
+                # ✅ DEBUG: Print actual shapes to diagnose mismatch
+                if layer_idx == 0:
+                    print(f"[DEBUG] Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
+                    print(f"[DEBUG] num_generated={num_generated}, fill_last={fill_last}")
+                    if fill_last > 0 and last_chunk_id >= 0:
+                        last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
+                        last_chunk = self.cache.get_chunk(last_chunk_key)
+                        if last_chunk:
+                            print(f"[DEBUG] last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
+
                 # k, v shapes: [batch, seq_len, num_heads, head_dim]
                 # seq_len includes everything: prev_context + input + new_generated
 
@@ -727,7 +748,11 @@ class Worker:
 
                     # ✅ CRITICAL: Correct context_length calculation
                     # = tokens before this chunk considering the merge
-                    context_length = actual_context_before + (chunk_idx * chunk_size) + fill_last
+                    # = actual_context_before (완전한 이전 청크들)
+                    #   + last_chunk_size (채우기 전 chunk 0)
+                    #   + fill_last (chunk 0에 추가된 토큰)
+                    #   + (chunk_idx * chunk_size) (현재 루프의 청크들)
+                    context_length = actual_context_before + last_chunk_size + fill_last + (chunk_idx * chunk_size)
 
                     # Create chunk for this layer
                     chunk = KVChunk(

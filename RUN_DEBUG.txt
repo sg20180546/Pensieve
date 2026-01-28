@@ -1,0 +1,166 @@
+================================================================================
+QUICK START: Multi-Turn KV Cache Debug
+================================================================================
+
+STEP 1: Run the debug test
+================================================================================
+cd /Users/sj/pensieve
+python test_multiturn_debug.py
+
+Expected output:
+- [DEBUG _custom_generate] messages showing batch generation
+- [DEBUG _process_outputs] messages showing KV extraction
+- [DEBUG] Layer 0 messages showing shapes during storage
+- Either success message or shape mismatch error
+
+
+STEP 2: Capture full output to file (for detailed analysis)
+================================================================================
+python test_multiturn_debug.py 2>&1 | tee debug_output.log
+
+Then examine:
+grep "\[DEBUG" debug_output.log
+
+
+STEP 3: Look for these patterns
+================================================================================
+
+✅ SUCCESS PATTERN - look for this:
+  [DEBUG _custom_generate] ... kv[0].shape=torch.Size([2, ...])
+  [DEBUG _process_outputs] ... After extraction: first_k.shape=torch.Size([1, ...])
+  [DEBUG] Layer 0: k.shape=torch.Size([1, ...])
+  ✓ Multi-turn test PASSED
+
+⚠️  ERROR PATTERN - if you see this:
+  [DEBUG _custom_generate] ... kv[0].shape=torch.Size([2, ...])
+  [DEBUG _process_outputs] ... After extraction: first_k.shape=torch.Size([2, ...])  ← STILL 2!
+  [DEBUG] Layer 0: k.shape=torch.Size([2, ...])  ← STILL 2!
+  ERROR: Expected size 38 but got size 81...
+
+  → This means batch extraction didn't work
+  → Slicing k[req_idx:req_idx+1, ...] didn't reduce batch size
+
+🔍 FALLBACK PATTERN - if you see this:
+  [DEBUG _process_outputs] ... kv_data is NOT tuple (type=...)
+  ERROR: Expected size 38 but got size 81...
+
+  → This means tuple packing in _custom_generate() didn't happen
+  → Code is using fallback path instead of extraction
+
+
+STEP 4: If error occurs, check shapes
+================================================================================
+
+Watch for these numbers:
+- k.shape[0] = batch size (should be 1 after extraction, not 2)
+- k.shape[1] = sequence length (this could be 38 or 81)
+- 38 likely = last_chunk tensor seq_len from previous turn
+- 81 likely = full sequence including new tokens
+
+Error "Expected size 38 but got size 81" means:
+- last_chunk has 38 tokens (or 38 seq_len dimension)
+- incoming k has 81 in that dimension
+- Mismatch in how we're splitting/merging chunks
+
+
+STEP 5: Compare with working state
+================================================================================
+
+If Turn 1 works but Turn 2 fails:
+- Turn 1 creates initial chunks (no incomplete chunks)
+- Turn 2 tries to merge with incomplete last chunk from Turn 1
+- Shape mismatch likely in the merge logic or fill_last calculation
+
+Check these values in debug output:
+- num_generated: should be ~20 (max_new_tokens)
+- fill_last: should be ≤ 32 (fitting into last chunk)
+- last_chunk.key_tensor.shape[1]: size of incomplete chunk
+
+
+STEP 6: Alternative command if GPU is slow
+================================================================================
+
+Use CPU for faster testing:
+  python test_multiturn_debug.py --device cpu
+
+Or modify test_multiturn_debug.py line where device is set:
+  device="cpu",  # instead of "cuda:0"
+
+
+STEP 7: Check specific layers
+================================================================================
+
+Current debug only prints Layer 0. If you want to see all layers:
+
+Edit /Users/sj/pensieve/src/pensieve/worker/worker.py around line 662
+Change:
+  if layer_idx == 0:
+To:
+  if True:  # Print all layers
+
+Or:
+  if layer_idx < 3:  # Print first 3 layers
+
+
+STEP 8: Files to examine
+================================================================================
+
+Main implementation:
+  /Users/sj/pensieve/src/pensieve/worker/worker.py
+  - Line 319-323: Tuple packing
+  - Line 530-568: Tuple unpacking & extraction
+  - Line 542-548: Debug output at extraction
+  - Line 662-669: Debug output at storage
+
+Debug helpers:
+  /Users/sj/pensieve/test_multiturn_debug.py (quick test)
+  /Users/sj/pensieve/DEBUG_GUIDE.md (detailed guide)
+  /Users/sj/pensieve/MULTITURN_DEBUG_SUMMARY.md (complete analysis)
+
+
+STEP 9: Once working
+================================================================================
+
+After confirming it works with test_multiturn_debug.py:
+
+1. Remove debug prints:
+   - Delete lines 320-323 (_custom_generate)
+   - Delete lines 542-548 (_process_outputs)
+   - Delete lines 662-669 (_store_new_kv_chunks)
+
+2. Run full demo:
+   python main.py --mode pensieve --model gpt2
+
+3. Try comparison:
+   python main.py --mode compare --model gpt2 --num-concurrent-users 3
+
+4. With real model:
+   python main.py --mode compare --model meta-llama/Meta-Llama-3-8B \
+       --num-concurrent-users 3 --gpu-cache 40 --cpu-cache 100
+
+
+STEP 10: If debug prints cause issues
+================================================================================
+
+All debug prints are print() statements which should work in Jupyter/console.
+
+If they're not showing:
+- They might be buffered (use --unbuffered flag if available)
+- Check if stderr is redirected
+- Try: python -u test_multiturn_debug.py
+
+If too much output:
+- Comment out some debug lines temporarily
+- Use grep to filter: python test_multiturn_debug.py 2>&1 | grep "ERROR\|PASSED\|After extraction"
+
+
+================================================================================
+Questions?
+================================================================================
+
+1. Where is the mismatch? → Look at STEP 4
+2. What does the error mean? → Look at MULTITURN_DEBUG_SUMMARY.md
+3. Why is batch size wrong? → Read DEBUG_GUIDE.md explanation
+4. How to fix if extraction fails? → See MULTITURN_DEBUG_SUMMARY.md "Alternative Approaches"
+
+================================================================================
