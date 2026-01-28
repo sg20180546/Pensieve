@@ -262,8 +262,8 @@ class Worker:
                     model_device = device
 
                 # Debug: Print device info on first step
-                if step == 0:
-                    print(f"    Device check: model_device={model_device}, input_device={device}")
+                # if step == 0:
+                #     print(f"    Device check: model_device={model_device}, input_device={device}")
 
                 # Move input tensors to model device
                 step_input_ids = step_input_ids.to(model_device)
@@ -287,11 +287,11 @@ class Worker:
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
 
                 # DEBUG: Check top-5 predictions
-                if step <= 1:
-                    top_k = 5
-                    _, top_indices = torch.topk(next_token_logits, top_k, dim=-1)
-                    top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
-                    print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
+                # if step <= 1:
+                #     top_k = 5
+                #     _, top_indices = torch.topk(next_token_logits, top_k, dim=-1)
+                #     top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
+                #     print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
 
                 # Greedy decoding (select highest probability token)
                 next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
