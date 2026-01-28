@@ -257,10 +257,17 @@ class Worker:
                     ttft_per_request[req.request_id] = time.time() - generation_start_time
 
                 # Store generated token
-                generated_ids[req_idx].append(next_token_ids.item())
+                token_id = next_token_ids.item()
+                generated_ids[req_idx].append(token_id)
+
+                # Debug: Print generated tokens
+                if step < 3:  # Only print first 3 tokens for debugging
+                    token_str = self.tokenizer.decode([token_id])
+                    print(f"  [Step {step}] Token ID: {token_id}, Token: '{token_str}'")
 
                 # Check for EOS
-                if next_token_ids.item() == eos_token_id:
+                if token_id == eos_token_id:
+                    print(f"  [EOS reached at step {step}]")
                     break
 
             # ✅ Store final KV for this session
