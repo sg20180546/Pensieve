@@ -245,6 +245,23 @@ class Worker:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
                     step_attention_mask = torch.ones(1, 1, device=device, dtype=torch.long)
 
+                # ✅ Ensure tensors are on correct device for model
+                # Handle both single GPU and device_map='auto' (distributed) scenarios
+                try:
+                    # For device_map='auto', model.device might not be reliable
+                    # Try to infer device from model parameters
+                    model_device = next(self.model.parameters()).device
+                except StopIteration:
+                    model_device = device
+
+                # Debug: Print device info on first step
+                if step == 0:
+                    print(f"    Device check: model_device={model_device}, input_device={device}")
+
+                # Move input tensors to model device
+                step_input_ids = step_input_ids.to(model_device)
+                step_attention_mask = step_attention_mask.to(model_device)
+
                 # Forward pass - with session-specific cache
                 outputs = self.model(
                     step_input_ids,

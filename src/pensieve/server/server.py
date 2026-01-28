@@ -107,9 +107,27 @@ class PensieveServer:
         """Lazy load model."""
         if self._model is None:
             from transformers import AutoModelForCausalLM
-            self._model = AutoModelForCausalLM.from_pretrained(self.model_name)
+
+            # Determine appropriate dtype based on model size
+            # Use bfloat16 for larger models (llama, etc.) to save memory
+            torch_dtype = torch.bfloat16 if 'llama' in self.model_name.lower() else torch.float32
+
+            print(f"Loading {self.model_name} with dtype={torch_dtype} on device={self.device}")
+
+            # Load model with proper dtype and device handling
+            # For memory efficiency and compatibility with our cache management,
+            # load to single specified device (not device_map='auto')
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch_dtype,
+                device_map=None,  # Don't auto-distribute, we handle device placement
+            )
+
+            # Move model to specified device
             self._model = self._model.to(self.device)
+
             self._model.eval()
+            print(f"Model loaded successfully on device(s)")
         return self._model
 
     @property
