@@ -314,14 +314,14 @@ class Worker:
                 # Instruct models are pre-optimized for good generation
                 # Small base models need sampling to avoid repetition (e.g., OPT-125m)
                 if "instruct" not in self.model_name:
-                    print("RANDOM")
+                    # print("RANDOM")
                     # Base models: use sampling to avoid repetition
                     temperature = 0.7
                     scaled_logits = next_token_logits / temperature  # [1, vocab_size]
                     probs = torch.softmax(scaled_logits, dim=-1)  # [1, vocab_size]
                     next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
                 else:
-                    print("INSTRUCT")
+                    # print("INSTRUCT")
                     # Instruct models: use greedy decoding (model-optimized)
                     next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
 
