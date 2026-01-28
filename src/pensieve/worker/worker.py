@@ -315,8 +315,8 @@ class Worker:
                     # print(f"  [EOS reached at step {step}]")
                     break
 
-            # ✅ Store final KV for this session
-            final_past_kv_per_session[session_id] = session_past_kv
+            # ✅ Store final KV for this session (with request index for batch extraction)
+            final_past_kv_per_session[session_id] = (req_idx, session_past_kv)
 
         # Reconstruct sequences
         all_sequences = []
@@ -528,19 +528,33 @@ class Worker:
             }
 
         # 2. Store KV cache for each session (from custom generation loop)
-        # ✅ FIXED: custom_generate() now returns per-session KV
+        # ✅ FIXED: custom_generate() now returns per-session KV with batch index
         if hasattr(outputs, "past_key_values") and outputs.past_key_values:
             try:
-                # past_key_values is now a dict: {session_id: final_past_kv}
+                # past_key_values is now a dict: {session_id: (req_idx, final_past_kv)}
                 past_kv_dict = outputs.past_key_values
                 if isinstance(past_kv_dict, dict):
-                    # Per-session KV storage
-                    for req in batch.requests:
-                        session_id = req.session_id
-                        if session_id in past_kv_dict:
-                            session_kv = past_kv_dict[session_id]
+                    # Per-session KV storage with batch extraction
+                    for session_id, kv_data in past_kv_dict.items():
+                        if isinstance(kv_data, tuple) and len(kv_data) == 2:
+                            # Unpack (req_idx, session_kv)
+                            req_idx, session_kv = kv_data
                             if session_kv:
-                                self._store_new_kv_chunks(batch, session_kv, session_id)
+                                # ✅ Extract only this request's KV (batch_size=1)
+                                # session_kv is tuple of (k, v) for each layer
+                                # Each k, v has shape [batch, seq_len, heads, dim]
+                                # Extract k[req_idx:req_idx+1, ...], v[req_idx:req_idx+1, ...]
+                                session_kv_single = tuple(
+                                    (
+                                        k[req_idx:req_idx+1, ...] if k is not None else None,
+                                        v[req_idx:req_idx+1, ...] if v is not None else None,
+                                    )
+                                    for k, v in session_kv
+                                )
+                                self._store_new_kv_chunks(batch, session_kv_single, session_id)
+                        else:
+                            # Fallback: assume it's direct KV
+                            self._store_new_kv_chunks(batch, kv_data, session_id)
                 else:
                     # Fallback for old code path (shouldn't happen now)
                     self._store_new_kv_chunks(batch, past_kv_dict)
