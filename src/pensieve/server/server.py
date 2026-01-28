@@ -119,7 +119,7 @@ class PensieveServer:
             # load to single specified device (not device_map='auto')
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                torch_dtype=torch_dtype,
+                dtype=torch_dtype,  # Use 'dtype' instead of deprecated 'torch_dtype'
                 device_map=None,  # Don't auto-distribute, we handle device placement
             )
 
@@ -326,6 +326,9 @@ class PensieveServer:
         input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
         input_ids = input_ids.to(self.device)
 
+        # Create attention mask (all ones = attend to all tokens)
+        attention_mask = torch.ones_like(input_ids)
+
         # Create request
         request = Request(
             session_id=session_id,
@@ -342,6 +345,7 @@ class PensieveServer:
             # Standard generation (no cache reuse)
             outputs = self.model.generate(
                 input_ids,
+                attention_mask=attention_mask,  # ← Provide attention mask
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
                 return_dict_in_generate=True,
