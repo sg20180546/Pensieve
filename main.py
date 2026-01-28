@@ -222,7 +222,10 @@ def run_interactive(args):
     # ✅ Pre-load model before accepting user input
     print("Loading model... (this may take a minute)")
     print()
-    server._get_worker()  # Trigger model loading now
+    _ = server.model     # Trigger model loading via property
+    _ = server.tokenizer  # Trigger tokenizer loading
+    if args.mode == "pensieve":
+        server._get_worker()  # Initialize worker for Pensieve mode
     print()
 
     session_id = f"interactive_{int(time.time())}"
