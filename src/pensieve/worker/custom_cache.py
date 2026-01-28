@@ -113,6 +113,14 @@ class PensieveCache(Cache):
 
         return keys, values
 
+    def is_empty(self) -> bool:
+        """Check if this cache has any cached KV chunks.
+
+        Returns:
+            True if no cached chunks, False if has cached chunks
+        """
+        return self._seq_length == 0
+
     def __len__(self) -> int:
         """Return number of layers (required by Cache interface)."""
         return self.num_layers

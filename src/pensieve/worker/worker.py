@@ -105,7 +105,10 @@ class Worker:
             # 3. Prepare batch inputs
             input_ids, attention_mask = self._prepare_batch_inputs(batch)
 
-            # 4. Create custom cache for this batch
+            # 4. Create custom cache for this batch (always, even if empty)
+            # Design: Pensieve always has cache object, but passes None to model if empty
+            # - Turn 1: cache object exists, but is empty → pass None to model
+            # - Turn 2+: cache object exists with chunks → pass to model
             pensieve_cache = PensieveCacheFactory.create(
                 cache_manager=self.cache,
                 batch_requests=batch.requests,
@@ -199,16 +202,22 @@ class Worker:
             req_attention_mask = attention_mask[req_idx:req_idx+1]  # [1, seq_len]
 
             # Get cached KV for this session (if available in pensieve_cache)
-            # PensieveCache.__getitem__ returns per-session cache
+            # KEY: Only pass cache to model if it has data
+            # - If empty: pass None (HF computes new KV)
+            # - If has chunks: pass PensieveCache (HF uses cached KV)
             session_cache = None
             try:
-                # Attempt to get session-specific cache
-                # (if PensieveCache is session-aware)
-                if hasattr(pensieve_cache, 'get_session_cache'):
-                    session_cache = pensieve_cache.get_session_cache(session_id)
+                # Check if pensieve_cache has any cached chunks
+                if hasattr(pensieve_cache, 'is_empty') and pensieve_cache.is_empty():
+                    # Cache is empty, pass None to model (will compute new KV)
+                    session_cache = None
                 else:
-                    # Fallback: use full pensieve_cache for first step
-                    session_cache = pensieve_cache
+                    # Cache has chunks, use it
+                    if hasattr(pensieve_cache, 'get_session_cache'):
+                        session_cache = pensieve_cache.get_session_cache(session_id)
+                    else:
+                        # Fallback: use full pensieve_cache for first step
+                        session_cache = pensieve_cache
             except Exception:
                 session_cache = None
 
