@@ -50,6 +50,9 @@ class PensieveCache(Cache):
         self._layer_kv_cache: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
         self._seq_length = 0
 
+        # HuggingFace Cache interface requires 'layers' attribute
+        self.layers = [None] * num_layers
+
     def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get KV cache for a specific layer.
 
@@ -114,6 +117,30 @@ class PensieveCache(Cache):
         """Return number of layers (required by Cache interface)."""
         return self.num_layers
 
+    def get_mask_sizes(
+        self,
+        cache_position: Optional[torch.Tensor] = None,
+        layer_idx: Optional[int] = None,
+    ) -> Tuple[int, int]:
+        """Get cache sizes for mask calculation (required by HuggingFace).
+
+        Args:
+            cache_position: Cache position tensor
+            layer_idx: Layer index
+
+        Returns:
+            Tuple of (kv_length, kv_offset)
+        """
+        # Return current sequence length and offset
+        return self._seq_length, 0
+
+    def to(self, device, **kwargs):
+        """Move cache to device (required by HuggingFace).
+
+        Since we manage our own tensors, just return self.
+        """
+        return self
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -144,6 +171,8 @@ class PensieveCache(Cache):
         """Reset cache for new forward pass."""
         self._layer_kv_cache.clear()
         self._seq_length = 0
+        # Reset layers attribute for HuggingFace compatibility
+        self.layers = [None] * self.num_layers
 
 
 class PensieveCacheFactory:
