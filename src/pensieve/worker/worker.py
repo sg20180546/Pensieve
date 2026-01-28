@@ -679,16 +679,17 @@ class Worker:
                         if last_chunk:
                             print(f"[DEBUG] last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
 
-                # k, v shapes: [batch, seq_len, num_heads, head_dim]
-                # seq_len includes everything: prev_context + input + new_generated
+                # k, v shapes: [batch, num_heads, seq_len, head_dim]
+                # (HuggingFace format for some models/versions)
+                # seq_len (dim=2) includes everything: prev_context + input + new_generated
 
                 # Calculate where new tokens start
-                total_seq_len = k.shape[1]  # Total sequence length
+                total_seq_len = k.shape[2]  # Total sequence length (dim=2)
                 new_tokens_start = total_seq_len - num_generated
 
                 # Extract ONLY new tokens
-                new_key = k[:, new_tokens_start:, :, :]  # [batch, num_generated, heads, dim]
-                new_value = v[:, new_tokens_start:, :, :]  # [batch, num_generated, heads, dim]
+                new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
+                new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
 
                 # ✅ CRITICAL: Handle last chunk merge
                 if fill_last > 0 and last_chunk_id >= 0:
@@ -697,20 +698,20 @@ class Worker:
                     last_chunk = self.cache.get_chunk(last_chunk_key)
 
                     if last_chunk:
-                        # Extract tokens to fill last chunk
-                        fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
-                        fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
+                        # Extract tokens to fill last chunk (dim=2 is seq_len)
+                        fill_key = new_key[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
+                        fill_value = new_value[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
 
                         # ✅ Move fill tensors to CPU to match last_chunk (which is stored in CPU)
                         fill_key = fill_key.cpu()
                         fill_value = fill_value.cpu()
 
-                        # Concatenate with existing last chunk KV
+                        # Concatenate with existing last chunk KV (concatenate along seq_len dimension)
                         merged_key = torch.cat(
-                            [last_chunk.key_tensor, fill_key], dim=1
-                        )  # [batch, last_chunk_size + fill_last, heads, dim]
+                            [last_chunk.key_tensor, fill_key], dim=2
+                        )  # [batch, heads, last_chunk_size + fill_last, head_dim]
                         merged_value = torch.cat(
-                            [last_chunk.value_tensor, fill_value], dim=1
+                            [last_chunk.value_tensor, fill_value], dim=2
                         )
 
                         # Update last chunk with merged KV
@@ -731,17 +732,17 @@ class Worker:
                             print(f"Warning: Failed to update last chunk {last_chunk_key}: {e}")
 
                 # ✅ Process remaining new tokens as full chunks
-                remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, dim]
-                remaining_value = new_value[:, fill_last:, :, :]
+                remaining_key = new_key[:, :, fill_last:, :]  # [batch, heads, remaining_new, head_dim]
+                remaining_value = new_value[:, :, fill_last:, :]
 
                 for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
                     # Calculate token range for this chunk
                     chunk_start = chunk_idx * chunk_size
                     chunk_end = min(chunk_start + chunk_size, remaining_new)
 
-                    # Extract chunk tokens
-                    chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
-                    chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
+                    # Extract chunk tokens (from seq_len dimension = dim=2)
+                    chunk_key = remaining_key[:, :, chunk_start:chunk_end, :]
+                    chunk_value = remaining_value[:, :, chunk_start:chunk_end, :]
 
                     # Determine chunk_id
                     chunk_id = next_chunk_id + chunk_idx
