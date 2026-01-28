@@ -349,11 +349,14 @@ class PensieveServer:
 
         with torch.no_grad():
             # Standard generation (no cache reuse)
+            # Use top_p sampling to avoid repetition loops with smaller models
             outputs = self.model.generate(
                 input_ids,
                 attention_mask=attention_mask,  # ← Provide attention mask
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
+                do_sample=True,  # Enable sampling
+                top_p=0.9,  # Nucleus sampling (90% cumulative probability)
+                temperature=0.7,  # Reduce randomness while adding diversity
                 return_dict_in_generate=True,
                 output_attentions=False,
             )

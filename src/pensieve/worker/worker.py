@@ -307,8 +307,18 @@ class Worker:
                 #     top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
                 #     print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
 
-                # Greedy decoding (select highest probability token)
-                next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
+                # ✅ Use sampling instead of greedy to avoid repetition loops
+                # Temperature scaling makes distribution softer (more uniform)
+                temperature = 0.7
+
+                # Apply temperature scaling to logits
+                scaled_logits = next_token_logits / temperature  # [1, vocab_size]
+
+                # Convert to probabilities
+                probs = torch.softmax(scaled_logits, dim=-1)  # [1, vocab_size]
+
+                # Sample from distribution (avoids greedy repetition)
+                next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
 
                 # Record TTFT
                 if step == 0 and not ttft_recorded:
