@@ -50,12 +50,33 @@ pip install -e .
 # GPT-2 (smallest, fastest for testing)
 python -c "from transformers import GPT2Tokenizer, GPT2LMHeadModel; GPT2Tokenizer.from_pretrained('gpt2'); GPT2LMHeadModel.from_pretrained('gpt2'); print('GPT-2 downloaded')"
 
-# 3.2 Optional: Download larger models
+# 3.2 Meta-Llama-3-8B (Main model for testing - REQUIRES HF LOGIN)
+# IMPORTANT: Must login to HuggingFace first
+# huggingface-cli login  ← Do this BEFORE downloading
+python -c "
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+print('Downloading Meta-Llama-3-8B tokenizer...')
+AutoTokenizer.from_pretrained('meta-llama/Meta-Llama-3-8B')
+print('✓ Tokenizer downloaded')
+print('Downloading Meta-Llama-3-8B model... (this may take 10-15 minutes, ~16GB)')
+model = AutoModelForCausalLM.from_pretrained(
+    'meta-llama/Meta-Llama-3-8B',
+    torch_dtype=torch.bfloat16,
+    device_map='auto'
+)
+print('✓ Meta-Llama-3-8B downloaded and cached')
+"
+
+# 3.3 Optional: Download other larger models
 # OPT-125M (125M parameters)
 # python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; AutoTokenizer.from_pretrained('facebook/opt-125m'); AutoModelForCausalLM.from_pretrained('facebook/opt-125m'); print('OPT-125M downloaded')"
 
 # OPT-350M (350M parameters, ~2GB)
 # python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; AutoTokenizer.from_pretrained('facebook/opt-350m'); AutoModelForCausalLM.from_pretrained('facebook/opt-350m'); print('OPT-350M downloaded')"
+
+# OPT-13B (13B parameters, ~26GB - requires HuggingFace token)
+# python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; AutoTokenizer.from_pretrained('facebook/opt-13b'); AutoModelForCausalLM.from_pretrained('facebook/opt-13b', device_map='auto'); print('OPT-13B downloaded')"
 
 
 ## PART 4: Run Basic Tests
@@ -456,12 +477,394 @@ Generated files:
     tail -f pensieve_server.log
 
 
-================================================================================
 Notes:
 - Ensure GPU has at least 8GB memory
 - First model download may take time (cached afterwards)
 - See README.md for detailed documentation
 - See IMPLEMENTATION_SUMMARY.md for architecture details
+================================================================================
+
+
+================================================================================
+          MANUAL INTERACTIVE TESTING (Meta-Llama-3-8B)
+            Interactive Prompt Testing for Both vLLM & Pensieve
+================================================================================
+
+## SETUP FOR META-LLAMA-3-8B
+================================================================================
+
+# 1.1 HuggingFace Login (Required for Llama-3-8B)
+# Go to https://huggingface.co/settings/tokens and create access token
+huggingface-cli login
+
+# Paste your token when prompted, then:
+# - username: hf_...
+# - password: (paste your token)
+
+# 1.2 Verify Llama-3-8B access
+python -c "from transformers import AutoTokenizer; t = AutoTokenizer.from_pretrained('meta-llama/Meta-Llama-3-8B'); print('✓ Llama-3-8B accessible')"
+
+# 1.3 Pre-download Llama-3-8B (large file, do once)
+echo "=== Downloading Meta-Llama-3-8B (may take 10-15 minutes) ==="
+python -c "
+from transformers import AutoTokenizer, AutoModelForCausalLM
+print('Downloading tokenizer...')
+AutoTokenizer.from_pretrained('meta-llama/Meta-Llama-3-8B')
+print('✓ Tokenizer downloaded')
+
+print('Downloading model... (this is large, ~16GB)')
+model = AutoModelForCausalLM.from_pretrained('meta-llama/Meta-Llama-3-8B', torch_dtype='auto', device_map='auto')
+print('✓ Model downloaded and cached')
+"
+
+# 1.4 Verify GPU memory is sufficient
+echo "=== Checking GPU Memory ==="
+nvidia-smi --query-gpu=memory.free --format=csv,nounits
+# Expected: At least 16-20GB free for Llama-3-8B
+
+
+## OPTION A: VLLM BASELINE MODE (Interactive)
+================================================================================
+
+echo "=== Starting vLLM Baseline (Stateless) ==="
+python main.py \
+  --mode vllm \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64
+
+# INTERACTION INSTRUCTIONS:
+# 1. Start the script above
+# 2. Wait for ">>> " prompt
+# 3. Type your message and press Enter
+# 4. Wait for response
+# 5. Type next message (continue conversation)
+# 6. Type "stats" to see statistics
+# 7. Type "exit" to quit
+
+# EXAMPLE CONVERSATION:
+# >>> Hello, what is machine learning?
+# (vLLM responds... takes ~2-3 seconds for turn 1)
+#
+# >>> Can you give me an example?
+# (vLLM takes ~2-3 seconds again - same as turn 1, recomputes history!)
+#
+# >>> What about deep learning?
+# (vLLM still ~2-3 seconds - NO cache reuse in stateless mode)
+
+# KEY OBSERVATION:
+# - All turns take similar time (NO speedup)
+# - Entire conversation recomputed each turn
+# - Baseline for comparison
+
+
+## OPTION B: PENSIEVE MODE (Interactive, RECOMMENDED)
+================================================================================
+
+echo "=== Starting Pensieve (Stateful with Cache) ==="
+python main.py \
+  --mode pensieve \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64 \
+  --gpu-cache 40 \
+  --cpu-cache 100
+
+# SAME INTERACTION INSTRUCTIONS:
+# 1. Start the script above
+# 2. Wait for ">>> " prompt
+# 3. Type your message and press Enter
+# 4. Wait for response
+# 5. Type next message (continue conversation)
+# 6. Type "stats" to see cache statistics
+# 7. Type "exit" to quit
+
+# EXAMPLE CONVERSATION (SAME AS ABOVE):
+# >>> Hello, what is machine learning?
+# (Pensieve processes... ~2-3 seconds for turn 1, NO cache yet)
+#
+# >>> Can you give me an example?
+# (Pensieve processes... ~1.0-1.5 seconds - FASTER! Uses cached history from turn 1)
+#
+# >>> What about deep learning?
+# (Pensieve processes... ~1.0-1.5 seconds - Same speed, NOT slowing down)
+
+# KEY OBSERVATION:
+# - Turn 1: ~2-3 seconds (same as vLLM baseline)
+# - Turn 2+: ~1.0-1.5 seconds (FASTER due to cache)
+# - Statistics show GPU cache hits
+# - This is Pensieve's advantage!
+
+
+## SIDE-BY-SIDE COMPARISON SCRIPT
+================================================================================
+
+# Run both modes back-to-back to compare directly
+
+# 2.1 Create comparison script
+cat > test_comparison.sh << 'EOF'
+#!/bin/bash
+
+echo "================================================================================"
+echo "              PENSIEVE vs vLLM MANUAL COMPARISON"
+echo "              Interactive Testing with Meta-Llama-3-8B"
+echo "================================================================================"
+
+# Test questions (you can modify these)
+declare -a QUESTIONS=(
+    "What is machine learning?"
+    "Give me an example of machine learning in real world."
+    "How does deep learning differ from traditional ML?"
+    "Can you explain neural networks?"
+    "What applications use neural networks?"
+)
+
+echo ""
+echo "QUESTIONS TO ASK (Run the same questions in both modes):"
+for i in "${!QUESTIONS[@]}"; do
+    echo "  $((i+1)). ${QUESTIONS[$i]}"
+done
+
+echo ""
+echo "================================================================================"
+echo "                    TEST 1: vLLM BASELINE (Stateless)"
+echo "================================================================================"
+echo "Running: python main.py --mode vllm --model meta-llama/Meta-Llama-3-8B --interactive"
+echo ""
+echo "INSTRUCTIONS:"
+echo "  1. Wait for '>>> ' prompt"
+echo "  2. Type each question from the list above, one per line"
+echo "  3. Observe response time for each turn"
+echo "  4. Type 'stats' to see statistics"
+echo "  5. Type 'exit' to quit"
+echo ""
+echo "WHAT TO OBSERVE:"
+echo "  • Turn 1 time (no cache): ~2-3 seconds"
+echo "  • Turn 2 time: Still ~2-3 seconds (no speedup!)"
+echo "  • Turn 5 time: Still ~2-3 seconds (confirms no cache)"
+echo ""
+read -p "Ready to start vLLM mode? Press Enter..."
+
+python main.py \
+  --mode vllm \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64
+
+echo ""
+echo "================================================================================"
+echo "                    TEST 2: PENSIEVE (Stateful with Cache)"
+echo "================================================================================"
+echo "Running: python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --interactive"
+echo ""
+echo "INSTRUCTIONS:"
+echo "  1. Wait for '>>> ' prompt"
+echo "  2. Type THE SAME questions as before, in the same order"
+echo "  3. Observe response time for each turn (should be FASTER!)"
+echo "  4. Type 'stats' to see GPU/CPU cache statistics"
+echo "  5. Type 'exit' to quit"
+echo ""
+echo "WHAT TO OBSERVE:"
+echo "  • Turn 1 time (no cache): ~2-3 seconds (same as vLLM)"
+echo "  • Turn 2 time: ~1.0-1.5 seconds (FASTER! Cache helps)"
+echo "  • Turn 3+ time: ~1.0-1.5 seconds (consistent speedup)"
+echo "  • Cache stats show GPU cache hits increasing"
+echo ""
+read -p "Ready to start Pensieve mode? Press Enter..."
+
+python main.py \
+  --mode pensieve \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64 \
+  --gpu-cache 40 \
+  --cpu-cache 100
+
+echo ""
+echo "================================================================================"
+echo "                    COMPARISON COMPLETE"
+echo "================================================================================"
+echo ""
+echo "ANALYSIS:"
+echo "  • vLLM: Consistent time (no cache benefit)"
+echo "  • Pensieve: Decreasing time initially, then stable (cache benefit!)"
+echo "  • Speedup ratio: time_vllm_turn1 / time_pensieve_turn5"
+echo "  • Target: >1.5x speedup on turn 5+ (with Llama-3-8B)"
+echo ""
+
+EOF
+
+chmod +x test_comparison.sh
+./test_comparison.sh
+
+
+# 2.2 Alternative: Manual two-terminal comparison
+# Terminal 1: vLLM
+echo "=== Terminal 1: vLLM Baseline ==="
+python main.py --mode vllm --model meta-llama/Meta-Llama-3-8B --interactive --max-new-tokens 64
+
+# Terminal 2 (in another terminal): Pensieve
+echo "=== Terminal 2: Pensieve ==="
+python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --interactive --max-new-tokens 64 --gpu-cache 40 --cpu-cache 100
+
+
+## EXAMPLE CONVERSATION FOR MANUAL TESTING
+================================================================================
+
+# These are suggested questions to ask (in this order) in both modes:
+
+# Turn 1 (Simple question, introduces new topic):
+# >>> What is machine learning?
+
+# Turn 2 (Follow-up, builds on context):
+# >>> Can you give me a real-world example?
+
+# Turn 3 (More specific follow-up):
+# >>> How does that example use neural networks?
+
+# Turn 4 (Deeper dive):
+# >>> What are the advantages of neural networks in this case?
+
+# Turn 5 (Another follow-up):
+# >>> What are the limitations?
+
+# Expected behavior:
+# vLLM: ~2-3s per turn (consistent)
+# Pensieve: ~2-3s turn1, ~1.0-1.5s turns 2-5 (speedup visible!)
+
+
+## METRICS TO OBSERVE DURING MANUAL TESTING
+================================================================================
+
+### When you run stats command in interactive mode, look for:
+
+# vLLM Stats (Baseline):
+# - Cache statistics: N/A (stateless)
+# - TTFT (Time to First Token): Similar across turns (~2-3s)
+# - Tokens processed: Grows linearly with turn number
+# - Interpretation: Each turn recomputes entire history
+
+# Pensieve Stats (Stateful):
+# - GPU cache hits: Increases with turns (0% → 50-70%)
+# - GPU cache size: Grows as chunks stored
+# - CPU cache: May be empty if GPU has space
+# - TTFT: Decreases from turn 1 to turn 5 (2-3s → 1.0-1.5s)
+# - Speedup: Visible in TTFT ratio
+# - Eviction count: Should be low for this scenario
+# - Interpretation: Cache reuse reduces computation
+
+
+## ADVANCED: TESTING WITH DIFFERENT CACHE SIZES
+================================================================================
+
+# Test 1: Large GPU cache (should keep everything in GPU)
+python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --interactive \
+  --gpu-cache 80 --cpu-cache 50 --max-new-tokens 64
+
+# Expected: Very fast turns 2-5 (everything in GPU cache)
+
+# Test 2: Small GPU cache (forces eviction to CPU)
+python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --interactive \
+  --gpu-cache 2 --cpu-cache 20 --max-new-tokens 64
+
+# Expected: See CPU cache utilization, possible recovery costs
+# Still faster than vLLM, but with some overhead
+
+# Test 3: Tiny cache (forces dropped token recovery)
+python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --interactive \
+  --gpu-cache 1 --cpu-cache 5 --max-new-tokens 64
+
+# Expected: See recovery mechanism in action
+# More expensive, but still cheaper than full recomputation
+
+
+## LOGGING & ANALYSIS
+================================================================================
+
+# Run with detailed logging
+python -u main.py \
+  --mode pensieve \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64 \
+  --gpu-cache 40 \
+  --cpu-cache 100 \
+  2>&1 | tee pensieve_interactive.log
+
+# Later, analyze the log:
+cat pensieve_interactive.log | grep -E "(Turn|TTFT|Cache|Speedup)"
+
+# Compare with vLLM log:
+python -u main.py \
+  --mode vllm \
+  --model meta-llama/Meta-Llama-3-8B \
+  --interactive \
+  --max-new-tokens 64 \
+  2>&1 | tee vllm_interactive.log
+
+
+## MEASUREMENT TEMPLATE (Copy & Fill)
+================================================================================
+
+Use this template to record your manual measurements:
+
+Session Date: __________________
+Model: Meta-Llama-3-8B
+Cache Settings (Pensieve): GPU=40GB, CPU=100GB
+
+vLLM Baseline (Stateless):
+  Turn 1: _______ seconds
+  Turn 2: _______ seconds
+  Turn 3: _______ seconds
+  Turn 4: _______ seconds
+  Turn 5: _______ seconds
+
+Pensieve (Stateful):
+  Turn 1: _______ seconds
+  Turn 2: _______ seconds
+  Turn 3: _______ seconds
+  Turn 4: _______ seconds
+  Turn 5: _______ seconds
+
+Speedup Analysis:
+  Turn 1 speedup: _______ x
+  Turn 5 speedup: _______ x
+  Average speedup: _______ x
+
+Cache Statistics (from "stats" command in Pensieve):
+  GPU Cache Hits: _______ %
+  CPU Cache Hits: _______ %
+  GPU Cache Usage: _______ GB
+  CPU Cache Usage: _______ GB
+  Evictions: _______
+  Recoveries: _______
+
+Notes:
+  ___________________________________________________
+  ___________________________________________________
+
+
+## TROUBLESHOOTING INTERACTIVE MODE
+================================================================================
+
+# If Pensieve seems no faster than vLLM:
+# 1. Check cache size: --gpu-cache should be >20GB
+# 2. Check "stats" output: Should show increasing cache hits
+# 3. Check cache location: Chunks should be in GPU for speedup
+# 4. Run smaller model first (gpt2) to verify caching works
+
+# If interactive mode crashes:
+# 1. Check GPU memory: nvidia-smi
+# 2. Reduce max-new-tokens: --max-new-tokens 32
+# 3. Clear cache: pkill -f "python main.py"
+# 4. Try smaller model (gpt2) first
+
+# If Llama-3-8B download fails:
+# 1. Check HuggingFace token: huggingface-cli whoami
+# 2. Re-login: huggingface-cli login
+# 3. Try smaller model (facebook/opt-13b or gpt2)
+
+
 ================================================================================
 
 

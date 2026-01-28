@@ -2,6 +2,7 @@
 
 from .types import (
     CacheLocation,
+    Phase,
     Request,
     Batch,
     KVChunk,
@@ -14,6 +15,7 @@ from .cache import TwoTierCache
 
 __all__ = [
     "CacheLocation",
+    "Phase",
     "Request",
     "Batch",
     "KVChunk",

@@ -14,6 +14,12 @@ class CacheLocation(Enum):
     DROPPED = "dropped"
 
 
+class Phase(Enum):
+    """Phase of request processing."""
+    PREFILL = "prefill"          # Processing input prompt
+    GENERATION = "generation"    # Generating output tokens
+
+
 @dataclass
 class RequestConfig:
     """Configuration for a request."""
