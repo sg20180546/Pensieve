@@ -41,7 +41,7 @@ def load_sharept_dataset(
     dataset = load_dataset(
         "anon8231489123/ShareGPT_Vicuna_unfiltered",
         split="train",
-        trust_remote_code=True,
+        trust_remote_code=False,
     )
     # dataset = load_dataset(
     #     "m-a-p/CodeFeedback-Filtered-Instruction",
