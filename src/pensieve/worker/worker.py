@@ -196,7 +196,7 @@ class Worker:
             # 50256 = GPT-2/GPT-3, 2 = common default, 0 = last resort
             eos_token_id = 50256
 
-        print(f"  Using EOS token ID: {eos_token_id}")
+        # print(f"  Using EOS token ID: {eos_token_id}")
 
         # Track results per request
         generated_ids = [[] for _ in range(batch_size)]
@@ -306,13 +306,13 @@ class Worker:
                 generated_ids[req_idx].append(token_id)
 
                 # Debug: Print generated tokens
-                if step < 3:  # Only print first 3 tokens for debugging
-                    token_str = self.tokenizer.decode([token_id])
-                    print(f"  [Step {step}] Selected Token ID: {token_id}, Token: '{token_str}'")
+                # if step < 3:  # Only print first 3 tokens for debugging
+                #     token_str = self.tokenizer.decode([token_id])
+                #     print(f"  [Step {step}] Selected Token ID: {token_id}, Token: '{token_str}'")
 
                 # Check for EOS
                 if token_id == eos_token_id:
-                    print(f"  [EOS reached at step {step}]")
+                    # print(f"  [EOS reached at step {step}]")
                     break
 
             # ✅ Store final KV for this session
