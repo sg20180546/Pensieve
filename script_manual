@@ -1,0 +1,32 @@
+PENSIEVE_DEBUG=0  python main.py --mode pensieve --model meta-llama/Meta-Llama-3-8B --max-new-tokens 32
+
+
+
+PENSIEVE_DEBUG=0  python main.py --mode vllm --model meta-llama/Meta-Llama-3-8B --max-new-tokens 32
+
+
+PENSIEVE_DEBUG=0 python main.py --mode pensieve --model facebook/opt-125m --interactive --max-new-tokens 256
+
+
+
+PENSIEVE_DEBUG=0 python main.py --mode vllm --model meta-llama/Meta-Llama-3-8B-Instruct --interactive --max-new-tokens 256 --gpu-cache 64 --cpu-cache 128
+
+
+
+1️⃣ Demo Mode (하드코드)
+   python main.py --mode demo --model gpt2
+   → run_demo() 호출
+
+2️⃣ Dataset Evaluation (Pensieve)
+   python main.py --dataset sharegt --mode pensieve --num-concurrent-users 1  --model meta-llama/Meta-Llama-3-8B-Instruct  --gpu-cache 64 --cpu-cache 128
+
+   → run_dataset_evaluation() → run_concurrent_comparison() 호출
+
+3️⃣ Dataset Evaluation (vLLM)
+   python main.py --dataset sharegt  --num-concurrent-users 1  --model meta-llama/Meta-Llama-3-8B-Instruct --gpu-cache 64 --cpu-cache 128
+
+   → run_dataset_evaluation() → run_concurrent_comparison() 호출
+
+4️⃣ Interactive Mode
+   python main.py --interactive --mode pensieve
+   → run_interactive() 호출

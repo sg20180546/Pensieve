@@ -9,9 +9,9 @@ def load_sharept_dataset(
     max_turns: int = 5,
     min_turns: int = 2,
 ) -> List[Tuple[str, List[str]]]:
-    """Load ShareGPT conversations from HuggingFace datasets.
+    """Load multi-turn conversations from HuggingFaceH4/Bespoke-Stratos dataset.
 
-    Extracts user messages from ShareGPT conversations and returns them in the format
+    Extracts user messages from conversations and returns them in the format
     compatible with run_concurrent_comparison().
 
     Args:
@@ -36,17 +36,13 @@ def load_sharept_dataset(
 
     print("Loading ShareGPT dataset from HuggingFace...")
 
-    # Load ShareGPT dataset
-    # Note: This is a large dataset (~1GB), first load may take a while
+    # Load HuggingFace's Bespoke-Stratos dataset (16.7k conversations)
+    # This dataset uses standard Parquet format without custom loading scripts
     dataset = load_dataset(
-        "anon8231489123/ShareGPT_Vicuna_unfiltered",
+        "HuggingFaceH4/Bespoke-Stratos-17k",
         split="train"
-    )
-    # dataset = load_dataset(
-    #     "m-a-p/CodeFeedback-Filtered-Instruction",
-    #     split="train",
-    #     trust_remote_code=True,
-    # )
+    ) 
+
 
     print(f"✓ Dataset loaded: {len(dataset)} conversations available")
 
