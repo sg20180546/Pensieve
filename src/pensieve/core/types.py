@@ -29,6 +29,44 @@ class RequestConfig:
 
 
 @dataclass
+class SessionMetadata:
+    """Track cumulative state of a conversation session."""
+    session_id: str
+    total_input_tokens: int = 0        # 입력 토큰 누적
+    total_generated_tokens: int = 0    # 생성 토큰 누적
+    chunk_keys: List[str] = field(default_factory=list)  # 캐시된 chunks
+    last_accessed: float = field(default_factory=time.time)
+
+    @property
+    def total_tokens(self) -> int:
+        """전체 누적 토큰 개수"""
+        return self.total_input_tokens + self.total_generated_tokens
+
+    @property
+    def total_chunks(self) -> int:
+        """전체 청크 개수 (32개 토큰 = 1청크)"""
+        return (self.total_tokens + 31) // 32
+
+    @property
+    def last_chunk_size(self) -> int:
+        """마지막 청크의 실제 토큰 개수.
+
+        예시:
+        - 145개 토큰 → 5개 청크, 마지막은 17개
+        - 128개 토큰 → 4개 청크, 마지막은 32개 (정확히 나누어떨어짐)
+
+        Returns:
+            1-32 사이의 정수
+        """
+        remainder = self.total_tokens % 32
+        return remainder if remainder > 0 else 32
+
+    def update_last_accessed(self) -> None:
+        """마지막 접근 시간 업데이트"""
+        self.last_accessed = time.time()
+
+
+@dataclass
 class Request:
     """Represents a single user request in a conversation."""
     session_id: str

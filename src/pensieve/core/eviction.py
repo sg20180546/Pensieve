@@ -55,7 +55,7 @@ class RetentionValuePolicy:
         """
         self.cost_profile = cost_profile
 
-    def calculate_cost(self, chunk: KVChunk) -> float:
+    def calculate_cost(self, chunk: KVChunk, actual_total_chunks: int = None) -> float:
         """Calculate recomputation cost for a chunk (layer-wise model).
 
         Cost = layer_weight × position_weight × base_cost
@@ -67,9 +67,13 @@ class RetentionValuePolicy:
             → Layer 39: cost = 0.03 × ...  (lowest cost, pipelined)
 
         - position_weight: Session-relative position (leading tokens cheaper to recompute)
-            formula: (chunk_id + 1) / session_total_chunks
+            formula: (chunk_id + 1) / actual_total_chunks
             → Chunk 0: 0.01 (cheapest, evict first)
             → Chunk 99: 1.0 (most expensive, evict last)
+
+            ✅ CRITICAL: Uses actual_total_chunks (current session metadata)
+               not chunk.session_total_chunks (stale snapshot from when chunk was created)
+               This ensures consistent position weights across multi-turn conversations!
 
         - base_cost = attention_cost + non_attention_cost
             - attention_cost = alpha * context_length + beta
@@ -77,6 +81,8 @@ class RetentionValuePolicy:
 
         Args:
             chunk: KVChunk to estimate cost for
+            actual_total_chunks: Current total chunks in session (from SessionMetadata)
+                                If None, falls back to chunk.session_total_chunks (old behavior)
 
         Returns:
             Estimated recomputation cost (dimensionless, for relative ranking)
@@ -95,10 +101,12 @@ class RetentionValuePolicy:
             layer_weight = 1.0
 
         # Position weight: Session-relative position
-        # Chunk 0 = 0.01 (leading, cheapest to recompute)
-        # Chunk 99 = 1.0 (trailing, expensive to recompute)
-        if chunk.session_total_chunks > 0:
-            position_weight = (chunk.chunk_id + 1) / chunk.session_total_chunks
+        # ✅ Use actual_total_chunks from SessionMetadata for consistency
+        # Fallback to chunk.session_total_chunks if not provided (backward compatibility)
+        total_chunks = actual_total_chunks if actual_total_chunks is not None else chunk.session_total_chunks
+
+        if total_chunks > 0:
+            position_weight = (chunk.chunk_id + 1) / total_chunks
         else:
             position_weight = 1.0
 
@@ -108,7 +116,7 @@ class RetentionValuePolicy:
 
         return weighted_cost
 
-    def calculate_retention_value(self, chunk: KVChunk) -> float:
+    def calculate_retention_value(self, chunk: KVChunk, actual_total_chunks: int = None) -> float:
         """Calculate retention value for a chunk.
 
         Retention value V = Cost(layer, position, context) / T
@@ -123,13 +131,19 @@ class RetentionValuePolicy:
         while the cost component (Cost) ensures optimal eviction order within
         similar recency levels.
 
+        ✅ CRITICAL: actual_total_chunks parameter ensures consistent position weights
+           across multi-turn conversations. This fixes the stale session_total_chunks
+           snapshot in older chunks.
+
         Args:
             chunk: KVChunk to calculate retention value for
+            actual_total_chunks: Current total chunks in session (from SessionMetadata)
+                                If None, falls back to chunk.session_total_chunks
 
         Returns:
             Retention value (lower = evict first)
         """
-        cost = self.calculate_cost(chunk)
+        cost = self.calculate_cost(chunk, actual_total_chunks)
 
         # Time since last access (LRU component)
         time_inactive = time.time() - chunk.last_accessed
@@ -140,14 +154,19 @@ class RetentionValuePolicy:
 
         return retention_value
 
-    def rank_chunks_for_eviction(self, chunks: List[KVChunk]) -> List[Tuple[str, float]]:
+    def rank_chunks_for_eviction(self, chunks: List[KVChunk], cache=None) -> List[Tuple[str, float]]:
         """Rank chunks by retention value for eviction.
 
         Chunks are sorted in ascending order of retention value.
         Lowest retention value = evict first.
 
+        ✅ CRITICAL: If cache is provided, uses actual session metadata for position weights
+           instead of stale session_total_chunks from individual chunks.
+           This ensures consistent ranking across multi-turn conversations!
+
         Args:
             chunks: List of KVChunk objects to rank
+            cache: TwoTierCache instance (optional, for getting SessionMetadata)
 
         Returns:
             List of (chunk_key, retention_value) tuples sorted by value
@@ -156,7 +175,15 @@ class RetentionValuePolicy:
         for chunk in chunks:
             if chunk.location==CacheLocation.DROPPED:
                 continue
-            value = self.calculate_retention_value(chunk)
+
+            # ✅ Get actual total chunks from SessionMetadata if cache is available
+            actual_total_chunks = None
+            if cache is not None and hasattr(cache, 'get_session_metadata'):
+                metadata = cache.get_session_metadata(chunk.session_id)
+                if metadata is not None:
+                    actual_total_chunks = metadata.total_chunks
+
+            value = self.calculate_retention_value(chunk, actual_total_chunks)
             scored_chunks.append((chunk.key, value, chunk.context_length, chunk.session_id))
 
         # Sort by retention value (ascending) then by context_length (ascending)
@@ -187,17 +214,22 @@ class RetentionValuePolicy:
         self,
         chunks: List[KVChunk],
         target_bytes: int,
+        cache=None,
     ) -> List[str]:
         """Select chunks to evict to free a target amount of memory.
+
+        ✅ CRITICAL: Pass cache parameter to ensure consistent position weights
+           across multi-turn conversations!
 
         Args:
             chunks: List of chunks available to evict
             target_bytes: Target amount of memory to free
+            cache: TwoTierCache instance (optional, for getting SessionMetadata)
 
         Returns:
             List of chunk keys to evict
         """
-        ranked = self.rank_chunks_for_eviction(chunks)
+        ranked = self.rank_chunks_for_eviction(chunks, cache=cache)
 
         to_evict = []
         freed = 0

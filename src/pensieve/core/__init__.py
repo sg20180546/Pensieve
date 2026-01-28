@@ -10,6 +10,7 @@ from .types import (
     BatchResult,
     CacheStatistics,
     RequestConfig,
+    SessionMetadata,
 )
 from .cache import TwoTierCache
 
@@ -23,5 +24,6 @@ __all__ = [
     "BatchResult",
     "CacheStatistics",
     "RequestConfig",
+    "SessionMetadata",
     "TwoTierCache",
 ]

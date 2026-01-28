@@ -243,11 +243,14 @@ class Worker:
                     step_attention_mask = req_attention_mask
                 else:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
-                    step_attention_mask = torch.ones(1, 1, device=device, dtype=torch.long)
+                    # CRITICAL: When using past_key_values, don't constrain attention_mask
+                    # Let HuggingFace handle it internally (attend to all past + current)
+                    step_attention_mask = None
 
                 # DEBUG: Print input shapes
                 if step <= 2:
-                    print(f"  [Step {step}] input_ids.shape={step_input_ids.shape}, mask.shape={step_attention_mask.shape}, mask_sum={step_attention_mask.sum().item()}")
+                    mask_info = f"shape={step_attention_mask.shape}, sum={step_attention_mask.sum().item()}" if step_attention_mask is not None else "None (auto)"
+                    print(f"  [Step {step}] input_ids.shape={step_input_ids.shape}, mask={mask_info}")
 
                 # ✅ Ensure tensors are on correct device for model
                 # Handle both single GPU and device_map='auto' (distributed) scenarios
@@ -551,13 +554,23 @@ class Worker:
         past_key_values,
         target_session_id: str = None,  # ✅ NEW: Store only this session's KV
     ) -> None:
-        """Store newly generated KV chunks in cache.
+        """Store newly generated KV chunks in cache with last chunk merge.
+
+        ✅ CRITICAL: Handles incomplete last chunks correctly!
 
         Process:
         1. For each layer, extract key and value tensors
-        2. Split into 32-token chunks
-        3. Create KVChunk objects
-        4. Store in GPU cache
+        2. Merge with incomplete last chunk (if exists)
+        3. Split into 32-token chunks
+        4. Create KVChunk objects with correct context_length
+        5. Store in GPU cache
+
+        Example (Turn 2 after Turn 1 with 145 tokens):
+        - Turn 1: chunks 0-3 (128), chunk 4 (17 tokens)
+        - Turn 2: generate 30 new tokens
+        - Last chunk needs: 32 - 17 = 15 more tokens
+        - So: take 15 from new 30 → fill chunk 4
+        - Remaining: 15 new tokens → create chunk 5
 
         Args:
             batch: Batch that was executed
@@ -594,14 +607,36 @@ class Worker:
 
             # Determine new chunk_ids based on existing chunks
             existing_positions = self.cache.get_session_positions(session_id)
-            next_chunk_id = max(existing_positions) + 1 if existing_positions else 0
 
-            # Calculate total tokens and chunks in session (after this generation)
-            # existing_positions is list of chunk position IDs: [0, 1, 2, ...]
-            # Each position represents 32 tokens
-            prev_context_length = len(existing_positions) * 32
-            total_tokens = prev_context_length + input_len + num_generated
-            total_chunks = (total_tokens + 31) // 32
+            # ✅ NEW: Get actual last chunk size from SessionMetadata
+            metadata = self.cache.get_session_metadata(session_id)
+            last_chunk_id = max(existing_positions) if existing_positions else -1
+            last_chunk_size = metadata.last_chunk_size if metadata else 32
+
+            # Calculate how many tokens needed to complete last chunk
+            remaining_to_fill_last = 0 if last_chunk_id == -1 else (chunk_size - last_chunk_size)
+
+            # Split new tokens: some fill last chunk, rest create new chunks
+            if remaining_to_fill_last > 0 and num_generated > 0:
+                # How many new tokens can fill the last chunk?
+                fill_last = min(remaining_to_fill_last, num_generated)
+                remaining_new = num_generated - fill_last  # After filling last chunk
+                next_chunk_id = last_chunk_id + 1  # Next new chunk after last_chunk_id
+            else:
+                # Last chunk doesn't exist or is already full
+                fill_last = 0
+                remaining_new = num_generated
+                next_chunk_id = last_chunk_id + 1 if last_chunk_id >= 0 else 0
+
+            # ✅ Calculate actual context_length considering metadata
+            if metadata:
+                actual_context_before = metadata.total_tokens - last_chunk_size
+            else:
+                actual_context_before = len(existing_positions) * chunk_size
+
+            # Total tokens after this generation
+            total_tokens = metadata.total_tokens + num_generated if metadata else (len(existing_positions) * chunk_size + input_len + num_generated)
+            total_chunks = (total_tokens + 31) // chunk_size
 
             # Process each layer and split into 32-token chunks
             for layer_idx, (k, v) in enumerate(past_key_values):
@@ -612,7 +647,6 @@ class Worker:
                 # seq_len includes everything: prev_context + input + new_generated
 
                 # Calculate where new tokens start
-                # Note: past_key_values seq_len = len(cached_context) + input_len + num_generated
                 total_seq_len = k.shape[1]  # Total sequence length
                 new_tokens_start = total_seq_len - num_generated
 
@@ -620,25 +654,61 @@ class Worker:
                 new_key = k[:, new_tokens_start:, :, :]  # [batch, num_generated, heads, dim]
                 new_value = v[:, new_tokens_start:, :, :]  # [batch, num_generated, heads, dim]
 
-                # ✅ Split into 32-token chunks
-                chunk_size = 32
+                # ✅ CRITICAL: Handle last chunk merge
+                if fill_last > 0 and last_chunk_id >= 0:
+                    # Get last chunk to update it
+                    last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
+                    last_chunk = self.cache.get_chunk(last_chunk_key)
 
-                for chunk_idx in range((num_generated + chunk_size - 1) // chunk_size):
+                    if last_chunk:
+                        # Extract tokens to fill last chunk
+                        fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
+                        fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, dim]
+
+                        # Concatenate with existing last chunk KV
+                        merged_key = torch.cat(
+                            [last_chunk.key_tensor, fill_key], dim=1
+                        )  # [batch, last_chunk_size + fill_last, heads, dim]
+                        merged_value = torch.cat(
+                            [last_chunk.value_tensor, fill_value], dim=1
+                        )
+
+                        # Update last chunk with merged KV
+                        updated_chunk = KVChunk(
+                            session_id=session_id,
+                            chunk_id=last_chunk_id,
+                            layer_idx=layer_idx,
+                            key_tensor=merged_key.detach().cpu(),
+                            value_tensor=merged_value.detach().cpu(),
+                            context_length=last_chunk.context_length,
+                            session_total_chunks=total_chunks,
+                            num_layers=self.num_layers,
+                        )
+
+                        try:
+                            self.cache.store_chunk(updated_chunk, location=CacheLocation.GPU)
+                        except Exception as e:
+                            print(f"Warning: Failed to update last chunk {last_chunk_key}: {e}")
+
+                # ✅ Process remaining new tokens as full chunks
+                remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, dim]
+                remaining_value = new_value[:, fill_last:, :, :]
+
+                for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
                     # Calculate token range for this chunk
                     chunk_start = chunk_idx * chunk_size
-                    chunk_end = min(chunk_start + chunk_size, num_generated)
+                    chunk_end = min(chunk_start + chunk_size, remaining_new)
 
                     # Extract chunk tokens
-                    chunk_key = new_key[:, chunk_start:chunk_end, :, :]
-                    chunk_value = new_value[:, chunk_start:chunk_end, :, :]
+                    chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
+                    chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
 
                     # Determine chunk_id
-                    # new_chunk_id = chunk from which position?
-                    # = existing tokens / 32 + chunk_idx
                     chunk_id = next_chunk_id + chunk_idx
 
-                    # context_length = tokens before this chunk
-                    context_length = prev_context_length + (chunk_idx * chunk_size)
+                    # ✅ CRITICAL: Correct context_length calculation
+                    # = tokens before this chunk considering the merge
+                    context_length = actual_context_before + (chunk_idx * chunk_size) + fill_last
 
                     # Create chunk for this layer
                     chunk = KVChunk(
@@ -657,6 +727,20 @@ class Worker:
                         self.cache.store_chunk(chunk, location=CacheLocation.GPU)
                     except Exception as e:
                         print(f"Warning: Failed to store chunk {chunk.key}: {e}")
+
+            # ✅ CRITICAL: Update SessionMetadata with new token count
+            # This is essential for:
+            # - eviction policy to use correct position weights (SessionMetadata.total_chunks)
+            # - recovery to know exact last chunk size (SessionMetadata.last_chunk_size)
+            # - context_length calculation to be accurate in next turn
+            #
+            # Note: Each session appears only once per batch due to pinned_sessions logic,
+            # so each session_id update is called exactly once per batch execution.
+            self.cache.update_session_tokens(
+                session_id=session_id,
+                input_tokens=input_len,
+                generated_tokens=num_generated,
+            )
 
     def reset(self) -> None:
         """Reset worker state (if any)."""

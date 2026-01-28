@@ -3,7 +3,7 @@
 import torch
 import time
 from typing import Dict, List, Optional, Tuple
-from .types import KVChunk, CacheLocation, CacheStatistics
+from .types import KVChunk, CacheLocation, CacheStatistics, SessionMetadata
 from .eviction import RetentionValuePolicy
 from collections import OrderedDict
 
@@ -50,6 +50,7 @@ class TwoTierCache:
 
         # Session tracking
         self.session_chunks: Dict[str, List[str]] = {}  # {session_id: [chunk_keys]}
+        self.session_metadata: Dict[str, SessionMetadata] = {}  # {session_id: SessionMetadata}
 
         # Pinning mechanism: protect chunks from eviction during execution
         # This prevents chunks from being evicted while a batch is being processed
@@ -487,8 +488,9 @@ class TwoTierCache:
 
         # Get eviction candidates ranked by retention value
         # select_chunks_to_evict returns chunks sorted by retention value
+        # ✅ Pass cache=self to ensure SessionMetadata is used for position weights
         eviction_candidates = self.eviction_policy.select_chunks_to_evict(
-            chunks_to_rank, required_bytes
+            chunks_to_rank, required_bytes, cache=self
         )
 
         # Evict chunks in order (skip pinned chunks)
@@ -525,8 +527,9 @@ class TwoTierCache:
                     cpu_chunks = list(self.cpu_cache.values())
                     if cpu_chunks:
                         # Use retention value policy to select what to drop from CPU
+                        # ✅ Pass cache=self to ensure SessionMetadata is used
                         cpu_evict_candidates = self.eviction_policy.select_chunks_to_evict(
-                            cpu_chunks, chunk.size_bytes
+                            cpu_chunks, chunk.size_bytes, cache=self
                         )
 
                         # Drop chunks from CPU using retention value ranking
@@ -707,3 +710,51 @@ class TwoTierCache:
             f"CPU chunks: {len(self.cpu_cache)} | "
             f"Dropped chunks: {len(self.dropped_chunks)}"
         )
+
+    def update_session_tokens(
+        self,
+        session_id: str,
+        input_tokens: int,
+        generated_tokens: int,
+    ) -> None:
+        """Update cumulative token count for a session.
+
+        Called after each generation to track total tokens in session.
+        This enables accurate token recovery and chunk management.
+
+        Args:
+            session_id: Session ID
+            input_tokens: New input tokens in this request
+            generated_tokens: New generated tokens in this request
+        """
+        if session_id not in self.session_metadata:
+            self.session_metadata[session_id] = SessionMetadata(session_id)
+
+        metadata = self.session_metadata[session_id]
+        metadata.total_input_tokens += input_tokens
+        metadata.total_generated_tokens += generated_tokens
+        metadata.update_last_accessed()
+
+    def get_session_total_tokens(self, session_id: str) -> int:
+        """Get cumulative total tokens for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Total number of tokens (input + generated) for this session
+        """
+        if session_id not in self.session_metadata:
+            return 0
+        return self.session_metadata[session_id].total_tokens
+
+    def get_session_metadata(self, session_id: str) -> Optional[SessionMetadata]:
+        """Get metadata for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            SessionMetadata if exists, None otherwise
+        """
+        return self.session_metadata.get(session_id, None)
