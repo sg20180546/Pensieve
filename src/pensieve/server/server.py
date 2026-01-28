@@ -360,6 +360,7 @@ class PensieveServer:
 
             # Only apply custom sampling for small base models to avoid repetition
             # Instruct models are pre-configured for good generation
+
             if "instruct" not in self.model_name.lower():
                 # Small base models need sampling (e.g., OPT-125m)
                 gen_kwargs.update({
@@ -367,7 +368,12 @@ class PensieveServer:
                     "top_p": 0.9,
                     "temperature": 0.7,
                 })
-
+                print("RANDOM MODE")
+            else:
+                print("INSTRUCT MODE")
+                
+                
+                
             outputs = self.model.generate(input_ids, **gen_kwargs)
 
         elapsed = time.time() - start_time
