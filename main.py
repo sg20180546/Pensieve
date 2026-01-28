@@ -219,6 +219,12 @@ def run_interactive(args):
         device=args.device,
     )
 
+    # ✅ Pre-load model before accepting user input
+    print("Loading model... (this may take a minute)")
+    print()
+    server._get_worker()  # Trigger model loading now
+    print()
+
     session_id = f"interactive_{int(time.time())}"
     turn = 0
 
