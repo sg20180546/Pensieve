@@ -248,9 +248,9 @@ class Worker:
                     step_attention_mask = None
 
                 # DEBUG: Print input shapes
-                if step <= 2:
-                    mask_info = f"shape={step_attention_mask.shape}, sum={step_attention_mask.sum().item()}" if step_attention_mask is not None else "None (auto)"
-                    print(f"  [Step {step}] input_ids.shape={step_input_ids.shape}, mask={mask_info}")
+                # if step <= 2:
+                #     mask_info = f"shape={step_attention_mask.shape}, sum={step_attention_mask.sum().item()}" if step_attention_mask is not None else "None (auto)"
+                #     print(f"  [Step {step}] input_ids.shape={step_input_ids.shape}, mask={mask_info}")
 
                 # ✅ Ensure tensors are on correct device for model
                 # Handle both single GPU and device_map='auto' (distributed) scenarios
