@@ -368,9 +368,9 @@ class PensieveServer:
                     "top_p": 0.9,
                     "temperature": 0.7,
                 })
-                print("RANDOM MODE")
-            else:
-                print("INSTRUCT MODE")
+                # print("RANDOM MODE")
+            # else:
+                # print("INSTRUCT MODE")
                 
                 
                 
