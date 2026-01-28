@@ -27,15 +27,25 @@ def test_basic_inference():
     model = model.to(device)
     model.eval()
 
+    # Set pad token for GPT-2 (doesn't have one by default)
+    tokenizer.pad_token = tokenizer.eos_token
+    model.config.pad_token_id = model.config.eos_token_id
+
     # Test 1: Simple generation
     print("\n--- Test 1: Simple generation ---")
     prompt = "Hello, how are you?"
     input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+    attention_mask = torch.ones_like(input_ids)
     print(f"Input: {prompt}")
     print(f"Input shape: {input_ids.shape}")
 
     with torch.no_grad():
-        outputs = model.generate(input_ids, max_new_tokens=20, do_sample=False)
+        outputs = model.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=20,
+            do_sample=False,
+        )
 
     generated_text = tokenizer.decode(outputs[0])
     print(f"Output: {generated_text}")
@@ -44,10 +54,16 @@ def test_basic_inference():
     print("\n--- Test 2: Multi-turn simulation ---")
     turn_1_prompt = "Hello"
     turn_1_input = tokenizer.encode(turn_1_prompt, return_tensors='pt').to(device)
+    turn_1_attention_mask = torch.ones_like(turn_1_input)
 
     print(f"Turn 1 input: {turn_1_prompt}")
     with torch.no_grad():
-        outputs_1 = model.generate(turn_1_input, max_new_tokens=10, do_sample=False)
+        outputs_1 = model.generate(
+            turn_1_input,
+            attention_mask=turn_1_attention_mask,
+            max_new_tokens=10,
+            do_sample=False,
+        )
 
     response_1 = tokenizer.decode(outputs_1[0])
     print(f"Turn 1 response: {response_1}")
@@ -55,10 +71,16 @@ def test_basic_inference():
     # Turn 2: Append to history
     turn_2_prompt = response_1 + " What is AI?"
     turn_2_input = tokenizer.encode(turn_2_prompt, return_tensors='pt').to(device)
+    turn_2_attention_mask = torch.ones_like(turn_2_input)
 
     print(f"Turn 2 input: {turn_2_prompt[:50]}...")
     with torch.no_grad():
-        outputs_2 = model.generate(turn_2_input, max_new_tokens=10, do_sample=False)
+        outputs_2 = model.generate(
+            turn_2_input,
+            attention_mask=turn_2_attention_mask,
+            max_new_tokens=10,
+            do_sample=False,
+        )
 
     response_2 = tokenizer.decode(outputs_2[0])
     print(f"Turn 2 response: {response_2[-50:]}")
