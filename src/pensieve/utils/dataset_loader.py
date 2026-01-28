@@ -9,10 +9,13 @@ def load_sharept_dataset(
     max_turns: int = 5,
     min_turns: int = 2,
 ) -> List[Tuple[str, List[str]]]:
-    """Load multi-turn conversations from HuggingFaceH4/Bespoke-Stratos dataset.
+    """Load multi-turn conversations from ConversationChronicles-sharegpt dataset.
 
     Extracts user messages from conversations and returns them in the format
     compatible with run_concurrent_comparison().
+
+    Note: Dataset contains 3-123 turn conversations. Default max_turns=5 filters
+    for shorter conversations; adjust as needed for your benchmark.
 
     Args:
         num_conversations: Number of conversations to sample
@@ -36,10 +39,11 @@ def load_sharept_dataset(
 
     print("Loading ShareGPT dataset from HuggingFace...")
 
-    # Load HuggingFace's Bespoke-Stratos dataset (16.7k conversations)
-    # This dataset uses standard Parquet format without custom loading scripts
+    # Load ConversationChronicles-sharegpt dataset (785k multi-turn conversations)
+    # Format: "from": "human"/"gpt", "value": message (standard ShareGPT format)
+    # Turn range: 3-123 turns per conversation
     dataset = load_dataset(
-        "HuggingFaceH4/Bespoke-Stratos-17k",
+        "Dans-DiscountModels/ConversationChronicles-sharegpt",
         split="train"
     ) 
 
