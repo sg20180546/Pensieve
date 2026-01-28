@@ -245,6 +245,10 @@ class Worker:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
                     step_attention_mask = torch.ones(1, 1, device=device, dtype=torch.long)
 
+                # DEBUG: Print input shapes
+                if step <= 2:
+                    print(f"  [Step {step}] input_ids.shape={step_input_ids.shape}, mask.shape={step_attention_mask.shape}, mask_sum={step_attention_mask.sum().item()}")
+
                 # ✅ Ensure tensors are on correct device for model
                 # Handle both single GPU and device_map='auto' (distributed) scenarios
                 try:
@@ -278,6 +282,13 @@ class Worker:
                 # Get next token logits
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
 
+                # DEBUG: Check top-5 predictions
+                if step <= 1:
+                    top_k = 5
+                    _, top_indices = torch.topk(next_token_logits, top_k, dim=-1)
+                    top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
+                    print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
+
                 # Greedy decoding (select highest probability token)
                 next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
 
@@ -293,7 +304,7 @@ class Worker:
                 # Debug: Print generated tokens
                 if step < 3:  # Only print first 3 tokens for debugging
                     token_str = self.tokenizer.decode([token_id])
-                    print(f"  [Step {step}] Token ID: {token_id}, Token: '{token_str}'")
+                    print(f"  [Step {step}] Selected Token ID: {token_id}, Token: '{token_str}'")
 
                 # Check for EOS
                 if token_id == eos_token_id:
