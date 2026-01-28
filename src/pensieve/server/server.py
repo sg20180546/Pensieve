@@ -10,6 +10,12 @@ from queue import Queue
 from threading import Lock
 import threading
 
+# Suppress HuggingFace warnings for cleaner output
+import warnings
+from transformers import logging as hf_logging
+hf_logging.set_verbosity_error()  # Only show errors, not warnings/info
+warnings.filterwarnings('ignore', category=UserWarning)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from pensieve.core import (
