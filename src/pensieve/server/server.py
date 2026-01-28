@@ -118,8 +118,22 @@ class PensieveServer:
         if self._tokenizer is None:
             from transformers import AutoTokenizer
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+
+            # Configure pad and eos tokens for models that don't have them
             if self._tokenizer.pad_token is None:
                 self._tokenizer.pad_token = self._tokenizer.eos_token
+
+            # GPT-2 specific: ensure eos_token is set
+            if self._tokenizer.eos_token is None:
+                # Use standard EOS tokens based on model
+                if 'gpt2' in self.model_name.lower():
+                    self._tokenizer.eos_token = '<|endoftext|>'
+                else:
+                    self._tokenizer.eos_token = '</s>'
+
+            # Ensure pad_token_id is set (fallback to eos_token_id)
+            if self._tokenizer.pad_token_id is None:
+                self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
         return self._tokenizer
 
     def _get_worker(self):

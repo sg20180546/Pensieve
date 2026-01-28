@@ -185,7 +185,18 @@ class Worker:
         """
         batch_size = len(batch.requests)
         device = input_ids.device
-        eos_token_id = self.tokenizer.eos_token_id or 2
+
+        # Get EOS token ID safely
+        eos_token_id = self.tokenizer.eos_token_id
+        if eos_token_id is None:
+            # Fallback: use model config
+            eos_token_id = getattr(self.model.config, 'eos_token_id', None)
+        if eos_token_id is None:
+            # Last resort: use common EOS tokens
+            # 50256 = GPT-2/GPT-3, 2 = common default, 0 = last resort
+            eos_token_id = 50256
+
+        print(f"  Using EOS token ID: {eos_token_id}")
 
         # Track results per request
         generated_ids = [[] for _ in range(batch_size)]
@@ -247,9 +258,24 @@ class Worker:
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
 
-                # Get next token
+                # Get next token with temperature-based sampling
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
-                next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
+
+                # Apply temperature for better diversity
+                temperature = 0.7
+                next_token_logits = next_token_logits / temperature
+
+                # Use top-k filtering for stability
+                top_k = 50
+                top_k_logits, top_k_indices = torch.topk(next_token_logits, top_k, dim=-1)
+
+                # Create filtered logits with top-k values
+                filtered_logits = torch.full_like(next_token_logits, float('-inf'))
+                filtered_logits.scatter_(-1, top_k_indices, top_k_logits)
+
+                # Sample from filtered distribution
+                probs = torch.softmax(filtered_logits, dim=-1)
+                next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
 
                 # Record TTFT
                 if step == 0 and not ttft_recorded:
