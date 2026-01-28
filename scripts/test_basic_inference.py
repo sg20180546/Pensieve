@@ -94,24 +94,25 @@ def test_basic_inference():
     print("\n--- Test 5: KVChunk creation ---")
     from pensieve.core import KVChunk, CacheLocation
 
-    # Create dummy KV tensors
+    # Create dummy KV tensors for a single layer
     num_layers = model.config.n_layer
     hidden_size = model.config.n_embd
     num_heads = model.config.n_head
     head_dim = hidden_size // num_heads
 
-    kv_tensors = {}
-    for layer_idx in range(num_layers):
-        # Shape: [batch_size=1, seq_len=32, num_heads, head_dim]
-        k = torch.randn(1, 32, num_heads, head_dim, device=device)
-        v = torch.randn(1, 32, num_heads, head_dim, device=device)
-        kv_tensors[layer_idx] = (k, v)
+    # Create chunk for layer 0 (32 tokens)
+    k = torch.randn(1, 32, num_heads, head_dim, device='cpu')  # Store on CPU
+    v = torch.randn(1, 32, num_heads, head_dim, device='cpu')
 
     chunk = KVChunk(
         session_id="session_1",
         chunk_id=0,
-        layer_kv_tensors=kv_tensors,
+        layer_idx=0,  # First layer
+        key_tensor=k,
+        value_tensor=v,
         context_length=0,
+        session_total_chunks=5,  # Assume 5 chunks total in session
+        num_layers=num_layers,
         location=CacheLocation.GPU,
     )
 
