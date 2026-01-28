@@ -349,17 +349,26 @@ class PensieveServer:
 
         with torch.no_grad():
             # Standard generation (no cache reuse)
-            # Use top_p sampling to avoid repetition loops with smaller models
-            outputs = self.model.generate(
-                input_ids,
-                attention_mask=attention_mask,  # ← Provide attention mask
-                max_new_tokens=max_new_tokens,
-                do_sample=True,  # Enable sampling
-                top_p=0.9,  # Nucleus sampling (90% cumulative probability)
-                temperature=0.7,  # Reduce randomness while adding diversity
-                return_dict_in_generate=True,
-                output_attentions=False,
-            )
+            # For Instruct models: use model's default config (already optimized)
+            # For base models (especially small ones): use sampling to avoid repetition
+            gen_kwargs = {
+                "max_new_tokens": max_new_tokens,
+                "attention_mask": attention_mask,
+                "return_dict_in_generate": True,
+                "output_attentions": False,
+            }
+
+            # Only apply custom sampling for small base models to avoid repetition
+            # Instruct models are pre-configured for good generation
+            if "instruct" not in self.model_name.lower():
+                # Small base models need sampling (e.g., OPT-125m)
+                gen_kwargs.update({
+                    "do_sample": True,
+                    "top_p": 0.9,
+                    "temperature": 0.7,
+                })
+
+            outputs = self.model.generate(input_ids, **gen_kwargs)
 
         elapsed = time.time() - start_time
         self.total_prefill_time += elapsed  # vLLM counts everything as prefill cost

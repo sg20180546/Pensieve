@@ -69,6 +69,9 @@ class Worker:
         self.device = device
         self.batched_recovery_manager = batched_recovery_manager
 
+        # Store model name for generation config decisions
+        self.model_name = getattr(model.config, 'name_or_path', 'unknown').lower()
+
         # Model config
         self.num_layers = (
             model.config.num_hidden_layers
@@ -307,18 +310,18 @@ class Worker:
                 #     top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
                 #     print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
 
-                # ✅ Use sampling instead of greedy to avoid repetition loops
-                # Temperature scaling makes distribution softer (more uniform)
-                temperature = 0.7
-
-                # Apply temperature scaling to logits
-                scaled_logits = next_token_logits / temperature  # [1, vocab_size]
-
-                # Convert to probabilities
-                probs = torch.softmax(scaled_logits, dim=-1)  # [1, vocab_size]
-
-                # Sample from distribution (avoids greedy repetition)
-                next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
+                # ✅ Token selection: greedy for Instruct models, sampling for base models
+                # Instruct models are pre-optimized for good generation
+                # Small base models need sampling to avoid repetition (e.g., OPT-125m)
+                if "instruct" not in self.model_name:
+                    # Base models: use sampling to avoid repetition
+                    temperature = 0.7
+                    scaled_logits = next_token_logits / temperature  # [1, vocab_size]
+                    probs = torch.softmax(scaled_logits, dim=-1)  # [1, vocab_size]
+                    next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
+                else:
+                    # Instruct models: use greedy decoding (model-optimized)
+                    next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
 
                 # Record TTFT
                 if step == 0 and not ttft_recorded:
