@@ -220,7 +220,50 @@ done
 cat results/*.txt
 
 
-## PART 12: Expected Performance Benchmarks
+## PART 12: Test Chunk Pinning Mechanism (Critical for Concurrent Safety)
+================================================================================
+
+# This tests the pinning mechanism that prevents chunks from being evicted
+# while a batch is executing. This is critical for concurrent multi-session execution.
+#
+# Without pinning: Session 1 loses its chunks if Session 2 makes a request
+# With pinning: Session 1 chunks are protected during batch execution
+
+# 12.1 Run chunk pinning tests
+python scripts/test_chunk_pinning.py
+
+# Expected output:
+# ✅ TEST 1: Basic Pin/Unpin Operations
+#   ✓ Chunk stored
+#   ✓ Chunk not pinned initially
+#   ✓ Session pinned
+#   ✓ Session unpinned
+#
+# ✅ TEST 2: Pinned Chunks Protected From Eviction
+#   ✓ Chunks stored
+#   ✓ Session pinned
+#   ✓ Session chunks still in cache after eviction attempt
+#
+# ✅ TEST 3: Multiple Pinned Sessions
+#   ✓ Multiple sessions pinned/unpinned simultaneously
+#
+# ✅ TEST 4: Pinning During Batch Execution (Simulated)
+#   ✓ Batch chunks protected while pinned
+#   ✓ Batch chunks can be evicted after unpinned
+#
+# ✅ TEST 5: Scheduler Request Deferral (NEW - Critical!)
+#   ✓ Scheduler defers pinned sessions gracefully
+#   ✓ Only unpinned sessions added to batch
+#   ✓ Deferred requests return to queue
+#   ✓ No "all chunks pinned" stalls
+
+# 12.2 What this tests:
+# - Scenario: Session A,B,C executing (pinned), Session D arrives
+# - Without fix: D added to batch → eviction tries A,B,C → all pinned → failure!
+# - With fix: D deferred → only evict unpinned sessions → success!
+
+
+## PART 13: Expected Performance Benchmarks
 ================================================================================
 
 # Expected results (from paper, OPT-13B):
@@ -236,24 +279,24 @@ cat results/*.txt
 # Better results expected with OPT-13B or larger models
 
 
-## PART 13: Troubleshooting
+## PART 14: Troubleshooting
 ================================================================================
 
-# 13.1 If CUDA not available
+# 14.1 If CUDA not available
 # Set CPU-only mode:
 export CUDA_VISIBLE_DEVICES=""
 python main.py --mode pensieve --device cpu --model gpt2
 
-# 13.2 If out of memory
+# 14.2 If out of memory
 # Reduce cache sizes:
 python main.py --mode pensieve --gpu-cache 5 --cpu-cache 20 --model gpt2
 
-# 13.3 If model download fails
+# 14.3 If model download fails
 # Clear cache and retry:
 rm -rf ~/.cache/huggingface/
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')"
 
-# 13.4 Check installation
+# 14.4 Check installation
 python -c "from pensieve.server import create_server; print('Pensieve installed correctly!')"
 
 
@@ -838,6 +881,153 @@ EOF
 # - Pensieve: ~1.5-2.0s (for GPT-2)
 # - vLLM: ~1.5-2.0s (similar, no cache yet)
 # - Speedup: ~1.0x (turn 1, no caching benefit)
+
+
+## PART 23: Concurrent Benchmark with Cache Hotness
+================================================================================
+
+# 23.1 Concurrent benchmark with 6 users (3 access frequency levels)
+#
+# This benchmark automatically creates:
+# - 2 HOT clients (frequent access, 0.15s interval) → Stay in GPU cache
+# - 2 WARM clients (normal access, 0.5s interval) → GPU/CPU mixed
+# - 2 COLD clients (infrequent, 1.25s interval) → Trigger eviction/recovery
+#
+# This shows the paper's key insight: intelligent eviction based on hotness
+
+python main.py --mode compare --model gpt2 \
+  --num-concurrent-users 6 \
+  --request-interval 0.5 \
+  --gpu-cache 4 \
+  --cpu-cache 8 \
+  --max-new-tokens 32
+
+# Expected output:
+# PHASE 1: PENSIEVE (Concurrent Users with Hotness)
+#   Client 0: HOT (Frequent)     interval=0.15s
+#   Client 1: HOT (Frequent)     interval=0.15s
+#   Client 2: WARM (Normal)      interval=0.50s
+#   Client 3: WARM (Normal)      interval=0.50s
+#   Client 4: COLD (Infrequent)  interval=1.25s
+#   Client 5: COLD (Infrequent)  interval=1.25s
+#
+# PHASE 2: vLLM BASELINE (Concurrent Users - Stateless, Same Hotness)
+#   (vLLM uses same access pattern but no cache → always recomputes)
+#
+# Results show:
+# - Pensieve: Faster for HOT/WARM clients (cache hits)
+# - vLLM: Uniform slowness (recomputes all turns)
+# - Speedup: 1.5-2.5× for Pensieve (with Llama, 2-3×)
+
+
+# 23.2 Stress test with more concurrent users
+#
+# 9 users = 3 HOT, 3 WARM, 3 COLD
+# More cache contention → tests eviction policy more thoroughly
+
+python main.py --mode compare --model gpt2 \
+  --num-concurrent-users 9 \
+  --request-interval 0.3 \
+  --gpu-cache 4 \
+  --cpu-cache 8
+
+# Expected: Higher cache contention, visible eviction
+# HOT clients should still be prioritized for GPU cache
+
+
+# 23.3 Varying request intervals (slower = more eviction)
+
+python main.py --mode compare --model gpt2 \
+  --num-concurrent-users 6 \
+  --request-interval 1.0 \
+  --gpu-cache 4 \
+  --cpu-cache 8
+
+# With longer intervals, COLD clients are more likely to find cache evicted
+# Recovery costs become visible, but still < recomputation cost
+
+
+# 23.4 Very fast requests (more batching, less eviction)
+
+python main.py --mode compare --model gpt2 \
+  --num-concurrent-users 6 \
+  --request-interval 0.1 \
+  --gpu-cache 4 \
+  --cpu-cache 8
+
+# Fast requests mean clients arrive before being evicted
+# Shows batching benefit (Batch size > 1)
+
+
+# 23.5 Compare sequential vs concurrent
+#
+# Sequential (old benchmark - no concurrency)
+python main.py --mode compare --model gpt2 --num-concurrent-users 1
+
+# Concurrent (new benchmark - 6 concurrent users with hotness)
+python main.py --mode compare --model gpt2 --num-concurrent-users 6 --request-interval 0.5
+
+
+# 23.6 Full model benchmark (Meta-Llama-3-8B)
+
+python main.py --mode compare --model meta-llama/Meta-Llama-3-8B \
+  --num-concurrent-users 6 \
+  --request-interval 0.5 \
+  --gpu-cache 40 \
+  --cpu-cache 100 \
+  --max-new-tokens 32
+
+# Expected: 2-3× speedup (cache reuse is more significant with larger model)
+
+
+================================================================================
+                        INTERPRETATION GUIDE
+================================================================================
+
+## Understanding Hotness Distribution Results
+
+When you see output like:
+```
+Client Hotness Distribution:
+  • HOT clients (1/3): Request every 0.15s → GPU cache hit
+  • WARM clients (1/3): Request every 0.50s → GPU/CPU mixed
+  • COLD clients (1/3): Request every 1.25s → Eviction/Recovery
+```
+
+**What's happening**:
+
+1. **HOT clients** (frequent):
+   - Requests arrive before previous chunks are evicted
+   - Stay in GPU cache → lowest TTFT
+   - Pensieve benefit: 1.8-2.5× speedup vs vLLM
+
+2. **WARM clients** (normal):
+   - Some cache hits, some cache misses
+   - May trigger CPU swapping
+   - Pensieve benefit: 1.3-1.8× speedup
+
+3. **COLD clients** (infrequent):
+   - Earlier chunks evicted to CPU or DROPPED
+   - When return: Cache miss → must recover/swap
+   - Pensieve benefit: 1.1-1.5× speedup (recovery cost < recompute cost)
+
+**Key Insight**:
+Even with recovery overhead, Pensieve benefits from caching because:
+- vLLM recomputes entire history every turn (O(history_length))
+- Pensieve reuses most turns, recovers only dropped leading tokens (O(dropped_length))
+- For typical conversations: dropped_length << history_length → Pensieve wins
+
+## Metrics to Watch
+
+| Metric | What It Shows |
+|--------|---------------|
+| **Time Speedup** | Overall wall-clock improvement |
+| **Throughput** | Requests/second (higher = better batching) |
+| **Avg TTFT** | Cache effectiveness for typical clients |
+| **P99 TTFT** | Consistency (eviction overhead visible in p99) |
+| **Tail Latency** | Recovery costs for COLD clients |
+
+If P99 TTFT >> Avg TTFT, suggests some cold clients experiencing eviction.
 
 
 ================================================================================

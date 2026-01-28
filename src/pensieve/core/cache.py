@@ -51,6 +51,11 @@ class TwoTierCache:
         # Session tracking
         self.session_chunks: Dict[str, List[str]] = {}  # {session_id: [chunk_keys]}
 
+        # Pinning mechanism: protect chunks from eviction during execution
+        # This prevents chunks from being evicted while a batch is being processed
+        self.pinned_chunks: set = set()  # {chunk_key: True} for chunks that cannot be evicted
+        self.pinned_sessions: set = set()  # {session_id: True} for sessions whose chunks cannot be evicted
+
         # Eviction policy (retention value based)
         self.eviction_policy = RetentionValuePolicy()
 
@@ -105,6 +110,16 @@ class TwoTierCache:
     ) -> bool:
         """Store a single KV chunk in cache (internal, use store_chunks_for_position for storage).
 
+        CRITICAL: If chunk already exists in ANY cache tier, replace it with proper cleanup.
+        This ensures correctness for BOTH:
+        - Recovery path: _store_recovered_chunks() recreates dropped chunks
+        - Initial generation path: _store_new_kv_chunks() creates new chunks
+
+        Memory Safety:
+        - Checks ALL caches (GPU/CPU/DROPPED) for duplicates before storing
+        - Properly updates memory counters when removing old chunks
+        - Prevents cross-tier duplication (e.g., chunk in CPU and GPU simultaneously)
+
         Args:
             chunk: KVChunk to store (typically created by store_chunks_for_position)
             location: Where to store (GPU or CPU)
@@ -125,24 +140,48 @@ class TwoTierCache:
             current_used = self.cpu_used_bytes
             capacity = self.cpu_capacity_bytes
 
-        # Check if chunk already exists
-        if chunk_key in target_cache:
-            return True
+        # ✅ CRITICAL: Check ALL caches (not just target) for duplicates
+        # This handles cases where:
+        # 1. Same tier replacement (recovery recreates a chunk)
+        # 2. Cross-tier duplication (chunk evicted to CPU, then recovery stores in GPU)
+        # Both paths call store_chunk(), so cleanup must handle both!
+        for cache_dict, cache_location in [
+            (self.gpu_cache, CacheLocation.GPU),
+            (self.cpu_cache, CacheLocation.CPU),
+            (self.dropped_chunks, CacheLocation.DROPPED),
+        ]:
+            if chunk_key in cache_dict:
+                old_chunk = cache_dict[chunk_key]
+                freed_bytes = old_chunk.size_bytes
+
+                # Update memory tracking (remove old chunk from its current location)
+                if cache_location == CacheLocation.GPU:
+                    self.gpu_used_bytes -= freed_bytes
+                elif cache_location == CacheLocation.CPU:
+                    self.cpu_used_bytes -= freed_bytes
+                # DROPPED chunks don't have memory tracking
+
+                # Remove from wherever it currently is
+                del cache_dict[chunk_key]
+                # ✅ Note: Don't remove from session_chunks yet
+                # (will be re-added below if needed, with check to avoid duplicates)
 
         # Make space if needed
+        current_used = self.gpu_used_bytes if location == CacheLocation.GPU else self.cpu_used_bytes
         if current_used + chunk_size > capacity:
             freed = self._evict_to_free_space(chunk_size, location)
             if freed < chunk_size:
                 print(f"Warning: Could not free enough space for chunk {chunk_key}")
 
-        # Store chunk
+        # Store new chunk
         target_cache[chunk_key] = chunk
         chunk.location = location
 
-        # Update session tracking
+        # Update session tracking (only add if new)
         if chunk.session_id not in self.session_chunks:
             self.session_chunks[chunk.session_id] = []
-        self.session_chunks[chunk.session_id].append(chunk_key)
+        if chunk_key not in self.session_chunks[chunk.session_id]:
+            self.session_chunks[chunk.session_id].append(chunk_key)
 
         # Update memory tracking
         if location == CacheLocation.GPU:
@@ -221,8 +260,11 @@ class TwoTierCache:
 
         # Check dropped chunks
         if chunk_key in self.dropped_chunks:
-            self.stats.miss_count += 1
-            return None
+            chunk = self.dropped_chunks[chunk_key]
+            # ✅ Return dropped chunks for recovery (token_recovery.py needs them)
+            # Don't update access_time (recovery is special case)
+            self.stats.miss_count += 1  # Considered a miss since recovery needed
+            return chunk
 
         self.stats.miss_count += 1
         return None
@@ -246,8 +288,71 @@ class TwoTierCache:
                     positions.add(chunk.chunk_id)
         return sorted(list(positions))
 
+    def pin_session(self, session_id: str) -> None:
+        """Pin all chunks of a session to prevent eviction.
+
+        Called when a batch execution starts to protect the session's chunks
+        from being evicted by other sessions' cache requests.
+
+        Args:
+            session_id: Session ID to pin
+        """
+        self.pinned_sessions.add(session_id)
+        if session_id in self.session_chunks:
+            for chunk_key in self.session_chunks[session_id]:
+                self.pinned_chunks.add(chunk_key)
+
+    def unpin_session(self, session_id: str) -> None:
+        """Unpin all chunks of a session to allow eviction.
+
+        Called when batch execution completes to allow the session's chunks
+        to be evicted if needed by other sessions.
+
+        Args:
+            session_id: Session ID to unpin
+        """
+        self.pinned_sessions.discard(session_id)
+        if session_id in self.session_chunks:
+            for chunk_key in self.session_chunks[session_id]:
+                self.pinned_chunks.discard(chunk_key)
+
+    def pin_chunks(self, chunk_keys: List[str]) -> None:
+        """Pin specific chunks to prevent eviction.
+
+        Args:
+            chunk_keys: List of chunk keys to pin
+        """
+        for key in chunk_keys:
+            self.pinned_chunks.add(key)
+
+    def unpin_chunks(self, chunk_keys: List[str]) -> None:
+        """Unpin specific chunks to allow eviction.
+
+        Args:
+            chunk_keys: List of chunk keys to unpin
+        """
+        for key in chunk_keys:
+            self.pinned_chunks.discard(key)
+
+    def is_pinned(self, chunk_key: str) -> bool:
+        """Check if a chunk is pinned.
+
+        Args:
+            chunk_key: Key of chunk to check
+
+        Returns:
+            True if pinned, False otherwise
+        """
+        return chunk_key in self.pinned_chunks
+
     def evict_session(self, session_id: str) -> int:
-        """Evict all chunks of a session from GPU/CPU cache.
+        """Evict all chunks of a session from ALL tiers (GPU/CPU/DROPPED).
+
+        Cleanup at session end:
+        - Removes chunks from GPU cache
+        - Removes chunks from CPU cache
+        - Removes chunks from DROPPED list
+        - Clears session_chunks tracking
 
         Since chunks are layer-indexed, this evicts all layer variants
         for all positions in the session.
@@ -256,7 +361,7 @@ class TwoTierCache:
             session_id: Session ID to evict
 
         Returns:
-            Number of bytes freed
+            Number of bytes freed (GPU + CPU, not DROPPED)
         """
         freed = 0
         if session_id not in self.session_chunks:
@@ -264,6 +369,10 @@ class TwoTierCache:
 
         chunk_keys = self.session_chunks[session_id][:]  # Copy to avoid modification during iteration
         for chunk_key in chunk_keys:
+            # Skip pinned chunks (cannot evict while session is executing)
+            if self.is_pinned(chunk_key):
+                continue
+
             if chunk_key in self.gpu_cache:
                 chunk = self.gpu_cache.pop(chunk_key)
                 freed += chunk.size_bytes
@@ -272,6 +381,9 @@ class TwoTierCache:
                 chunk = self.cpu_cache.pop(chunk_key)
                 freed += chunk.size_bytes
                 self.cpu_used_bytes -= chunk.size_bytes
+            elif chunk_key in self.dropped_chunks:
+                # ✅ CRITICAL: Also remove from DROPPED (no memory to free, just cleanup)
+                self.dropped_chunks.pop(chunk_key)
 
         del self.session_chunks[session_id]
         self._update_statistics()
@@ -351,6 +463,9 @@ class TwoTierCache:
         Chunks with LOW retention value are evicted first (cheap to recompute).
         Key insight: Leading tokens have low context_length → evicted first!
 
+        CRITICAL: Pinned chunks are NEVER evicted, ensuring cache consistency
+        when multiple sessions are executing concurrently.
+
         Args:
             required_bytes: Amount of space needed
             location: Which tier to evict from (GPU or CPU)
@@ -376,7 +491,7 @@ class TwoTierCache:
             chunks_to_rank, required_bytes
         )
 
-        # Evict chunks in order
+        # Evict chunks in order (skip pinned chunks)
         for chunk_key in eviction_candidates:
             if freed >= required_bytes:
                 break
@@ -384,8 +499,16 @@ class TwoTierCache:
             if chunk_key not in cache:
                 continue
 
+            # IMPORTANT: Skip pinned chunks (cannot evict while being executed)
+            if self.is_pinned(chunk_key):
+                continue
+
             chunk = cache.pop(chunk_key)
             freed += chunk.size_bytes
+
+            # ⚠️ DO NOT remove from session_chunks yet!
+            # chunk will move to another tier (CPU or DROPPED)
+            # We'll add it back after move completes
 
             if location == CacheLocation.GPU:
                 self.gpu_used_bytes -= chunk.size_bytes
@@ -395,6 +518,7 @@ class TwoTierCache:
                     chunk.move_to_cpu()
                     self.cpu_cache[chunk_key] = chunk
                     self.cpu_used_bytes += chunk.size_bytes
+                    # ✅ Chunk still in session_chunks (now in CPU tier)
                 else:
                     # CPU is full - need to evict from CPU to make space
                     # This implements the hierarchical structure: GPU → CPU → DROPPED
@@ -412,12 +536,16 @@ class TwoTierCache:
                                 continue
 
                             drop_chunk = self.cpu_cache.pop(drop_key)
-                            self.cpu_used_bytes -= drop_chunk.size_bytes
+                            # ⚠️ IMPORTANT: DROPPED chunks stay in CPU memory!
+                            # They're in dropped_chunks dict but still take CPU space
+                            # Don't subtract from cpu_used_bytes - the space is still used
                             cpu_freed += drop_chunk.size_bytes
 
-                            # Move to DROPPED tier
+                            # Move to DROPPED tier (but tensors remain in CPU memory)
                             self.dropped_chunks[drop_key] = drop_chunk
                             drop_chunk.location = CacheLocation.DROPPED
+                            # ✅ Keep in session_chunks (tracking all tiers)
+                            # ✅ Keep in cpu_used_bytes (DROPPED chunks use CPU memory)
 
                             if cpu_freed >= chunk.size_bytes:
                                 break
@@ -427,17 +555,25 @@ class TwoTierCache:
                         chunk.move_to_cpu()
                         self.cpu_cache[chunk_key] = chunk
                         self.cpu_used_bytes += chunk.size_bytes
+                        # ✅ Chunk still in session_chunks (now in CPU tier)
                     else:
-                        # Still no space, drop the chunk
+                        # Still no space, drop the chunk directly
                         self.dropped_chunks[chunk_key] = chunk
                         chunk.location = CacheLocation.DROPPED
+                        # ✅ Keep in session_chunks (tracking DROPPED tier too)
 
             else:
-                # Evicting from CPU
-                self.cpu_used_bytes -= chunk.size_bytes
-                # Drop to DROPPED tier (end of hierarchy)
+                # Evicting from CPU → DROPPED tier
+                # ⚠️ IMPORTANT: Don't subtract from cpu_used_bytes!
+                # DROPPED chunks stay in CPU memory (recovery cache)
+                # Chunk moves: cpu_cache → dropped_chunks (both CPU memory)
+                # Therefore: cpu_used_bytes unchanged
+
                 self.dropped_chunks[chunk_key] = chunk
                 chunk.location = CacheLocation.DROPPED
+
+                # ✅ Keep in session_chunks (chunk still exists, now DROPPED)
+                # (Will be cleaned up when session ends via evict_session())
 
         self._update_statistics()
         return freed

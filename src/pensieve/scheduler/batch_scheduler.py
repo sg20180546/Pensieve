@@ -9,7 +9,6 @@ from pensieve.core.types import (
     Request,
     Batch,
     CachePlan,
-    Phase,
     CacheLocation,
 )
 from pensieve.core.cache import TwoTierCache
@@ -19,15 +18,16 @@ class BatchScheduler:
     """Manages request queue and forms batches for each iteration.
 
     Key features (Paper §4.2):
-    - Iteration-level batching: Add new requests when generation step completes
-    - Unified scheduling: Mix prefill + generation requests in same batch
+    - Iteration-level batching: Add new requests to queue
+    - Unified scheduling: Scheduler automatically mixes requests
     - Cache planning: Determine swap operations BEFORE execution
     - Memory-aware: Respects GPU/CPU capacity constraints
 
     Design:
-    - request_queue: Incoming prefill requests
-    - running_requests: Requests currently in generation phase
-    - Each iteration forms a batch from both queues
+    - request_queue: All incoming requests (unified handling)
+    - completed_requests: Track finished requests
+    - Worker's _custom_generate() automatically handles PREFILL/GENERATION phases
+      based on step number (step 0 = prefill, step > 0 = generation)
     """
 
     def __init__(
@@ -45,55 +45,84 @@ class BatchScheduler:
         self.max_batch_size = max_batch_size
 
         # Request management
-        self.request_queue: deque = deque()  # Incoming prefill requests
-        self.running_requests: List[Request] = []  # In-flight generation requests
+        self.request_queue: deque = deque()  # All incoming requests
         self.completed_requests: Dict[str, Request] = {}
 
     def add_request(self, request: Request) -> None:
         """Add new request to queue.
 
         Args:
-            request: Request to add (should be PREFILL phase)
+            request: Request to add (no phase management needed)
+
+        Note:
+            All requests are treated equally. Worker will automatically
+            handle PREFILL (step 0) vs GENERATION (step > 0) based on
+            generation loop progress.
         """
-        request.phase = Phase.PREFILL
         self.request_queue.append(request)
 
-    def form_next_batch(self) -> Tuple[Batch, CachePlan]:
-        """Form batch for next iteration with mixed prefill/generation.
+    def add_requests(self, requests: List[Request]) -> None:
+        """Add multiple requests to queue at once.
 
-        Strategy:
-        1. Try to keep running generation requests in batch (GENERATION phase)
-        2. Add new prefill requests until batch is full
-        3. Create cache plan for combined batch
+        ✅ Used for async batching: collect multiple requests and add together.
+
+        Args:
+            requests: List of Request objects to add
+        """
+        self.request_queue.extend(requests)
+
+    def form_next_batch(self) -> Tuple[Batch, CachePlan]:
+        """Form batch for next iteration.
+
+        Strategy (Unified with Pinning Awareness):
+        1. PREFER requests from unpinned sessions (avoid eviction conflicts)
+        2. Pull up to max_batch_size requests from queue
+        3. Create cache plan for batch
+        4. All requests handled uniformly - Worker automatically handles
+           PREFILL (step 0) vs GENERATION (step > 0) in generation loop
+
+        CRITICAL: If another batch is still executing (pinned), we avoid
+        adding requests from currently-executing sessions to prevent
+        eviction conflicts.
 
         Returns:
-            batch: Batch with mixed prefill/generation requests
+            batch: Batch with requests (no phase distinction)
             cache_plan: Swap operations needed before execution
 
-        Raises:
-            None (returns empty batch if queue empty and no running requests)
+        Note:
+            True unified batching - scheduler doesn't distinguish between
+            prefill/generation. Worker's generation loop naturally handles
+            phase transitions via step counter.
+
+            By avoiding pinned sessions, we ensure eviction only affects
+            unpinned chunks, preventing stalls when all chunks are protected.
         """
         batch = Batch(batch_id=f"batch_{int(time.time() * 1000)}")
 
-        # Add running requests first (generation phase)
-        for req in self.running_requests[:self.max_batch_size]:
-            batch.add_request(req)
+        # Strategy: Prefer unpinned sessions to avoid eviction conflicts
+        # This prevents situations where all chunks are pinned and new requests cannot be served
+        #
+        # Algorithm: Round-robin through queue, taking unpinned requests first
+        # If a request is from a pinned session, defer it to back of queue
+        skipped_reqs = []
 
-        # Add new prefill requests to fill batch
-        remaining_capacity = self.max_batch_size - len(batch.requests)
-        while remaining_capacity > 0 and len(self.request_queue) > 0:
+        while len(batch.requests) < self.max_batch_size and len(self.request_queue) > 0:
             req = self.request_queue.popleft()
-            batch.add_request(req)
-            remaining_capacity -= 1
+
+            # Check if this request's session is currently pinned (being executed)
+            if req.session_id in self.cache.pinned_sessions:
+                # Defer pinned requests to back of queue
+                skipped_reqs.append(req)
+            else:
+                # Add unpinned requests to batch
+                batch.add_request(req)
+
+        # Return skipped requests to back of queue for next batch
+        for req in skipped_reqs:
+            self.request_queue.append(req)
 
         # Create cache plan for this batch
         cache_plan = self.create_cache_plan(batch)
-
-        # Update running requests for next iteration
-        # (In real system, would separate by whether they finished generation)
-        self.running_requests = [
-            req for req in batch.requests if req.phase == Phase.GENERATION
-        ]
 
         return batch, cache_plan
 
@@ -133,18 +162,16 @@ class BatchScheduler:
                 chunk = self.cache.get_chunk(chunk_key)
 
                 if chunk is None:
-                    # Check dropped chunks
-                    chunk = self.cache.dropped_chunks.get(chunk_key)
-                    if chunk:
-                        chunks_needed[chunk_key] = "DROPPED"
+                    # Not found anywhere
                     continue
 
-                # Chunk exists in GPU or CPU
-                if chunk_key in self.cache.gpu_cache:
+                # ✅ Explicitly determine chunk location from chunk.location
+                # (get_chunk now returns DROPPED chunks too)
+                if chunk.location == CacheLocation.GPU:
                     chunks_needed[chunk_key] = "GPU"
-                elif chunk_key in self.cache.cpu_cache:
+                elif chunk.location == CacheLocation.CPU:
                     chunks_needed[chunk_key] = "CPU"
-                else:
+                elif chunk.location == CacheLocation.DROPPED:
                     chunks_needed[chunk_key] = "DROPPED"
 
         # 2. Plan swaps based on memory pressure
@@ -261,12 +288,11 @@ class BatchScheduler:
         """Check if there are more requests to process.
 
         Returns:
-            True if queue has requests or running requests exist
+            True if queue has requests
         """
-        return len(self.request_queue) > 0 or len(self.running_requests) > 0
+        return len(self.request_queue) > 0
 
     def reset(self) -> None:
         """Reset scheduler state."""
         self.request_queue.clear()
-        self.running_requests.clear()
         self.completed_requests.clear()

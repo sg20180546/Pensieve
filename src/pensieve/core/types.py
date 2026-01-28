@@ -14,12 +14,6 @@ class CacheLocation(Enum):
     DROPPED = "dropped"
 
 
-class Phase(Enum):
-    """Request phase in LLM inference."""
-    PREFILL = "prefill"
-    GENERATION = "generation"
-
-
 @dataclass
 class RequestConfig:
     """Configuration for a request."""
@@ -34,7 +28,6 @@ class Request:
     session_id: str
     request_id: str
     input_ids: torch.Tensor  # Shape: [seq_len]
-    phase: Phase = Phase.PREFILL
     max_new_tokens: int = 128
     generated_tokens: List[int] = field(default_factory=list)
     finished: bool = False
@@ -89,14 +82,6 @@ class Batch:
     def num_requests(self) -> int:
         """Number of requests in batch."""
         return len(self.requests)
-
-    def get_prefill_requests(self) -> List[Request]:
-        """Get requests in prefill phase."""
-        return [r for r in self.requests if r.phase == Phase.PREFILL]
-
-    def get_generation_requests(self) -> List[Request]:
-        """Get requests in generation phase."""
-        return [r for r in self.requests if r.phase == Phase.GENERATION]
 
 
 @dataclass

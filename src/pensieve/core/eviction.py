@@ -154,6 +154,8 @@ class RetentionValuePolicy:
         """
         scored_chunks = []
         for chunk in chunks:
+            if chunk.location==CacheLocation.DROPPED:
+                continue
             value = self.calculate_retention_value(chunk)
             scored_chunks.append((chunk.key, value, chunk.context_length, chunk.session_id))
 
