@@ -267,7 +267,8 @@ class Worker:
 
                 # Move input tensors to model device
                 step_input_ids = step_input_ids.to(model_device)
-                step_attention_mask = step_attention_mask.to(model_device)
+                if step_attention_mask is not None:
+                    step_attention_mask = step_attention_mask.to(model_device)
 
                 # Forward pass - with session-specific cache
                 outputs = self.model(
