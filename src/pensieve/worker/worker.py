@@ -549,7 +549,9 @@ class Worker:
             next_chunk_id = max(existing_positions) + 1 if existing_positions else 0
 
             # Calculate total tokens and chunks in session (after this generation)
-            prev_context_length = sum(len(chunk) for chunk in self.cache.get_session_positions(session_id)) * 32
+            # existing_positions is list of chunk position IDs: [0, 1, 2, ...]
+            # Each position represents 32 tokens
+            prev_context_length = len(existing_positions) * 32
             total_tokens = prev_context_length + input_len + num_generated
             total_chunks = (total_tokens + 31) // 32
 
