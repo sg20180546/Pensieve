@@ -2,37 +2,29 @@
 """Main entry point for Pensieve server.
 
 Usage:
-    # Run with Pensieve (stateful) mode - uses Llama-3-8B by default
-    python main.py --mode pensieve
+    # Demo mode (hardcoded conversation)
+    python main.py --mode demo --model gpt2
 
-    # Run with vLLM baseline (stateless) mode
-    python main.py --mode vllm
+    # Interactive mode
+    python main.py --interactive --mode pensieve --model gpt2
 
-    # Run interactive multi-turn conversation
-    python main.py --mode pensieve --interactive
+    # Dataset evaluation with Pensieve (concurrent benchmark)
+    python main.py --dataset sharegt --mode pensieve --num-concurrent-users 6
 
-    # Compare Pensieve vs vLLM (sequential - single user)
-    python main.py --mode compare --model gpt2
+    # Dataset evaluation with vLLM baseline (concurrent benchmark)
+    python main.py --dataset sharegt --mode vllm --num-concurrent-users 6
 
-    # Compare with concurrent users (RECOMMENDED for demonstration)
-    # Automatically creates HOT/WARM/COLD clients to show cache hotness
-    python main.py --mode compare --model gpt2 --num-concurrent-users 6 --request-interval 0.5
-
-    # Stress test with many concurrent users
-    python main.py --mode compare --model gpt2 --num-concurrent-users 9 --request-interval 0.3
-
-    # Full model evaluation (Meta-Llama-3-8B)
-    python main.py --mode compare --model meta-llama/Meta-Llama-3-8B \
-        --num-concurrent-users 6 --gpu-cache 40 --cpu-cache 100
-
-    # Compare on ShareGPT dataset (future)
-    python main.py --mode compare --dataset sharegt --num_conversations 10
+    # Full model evaluation (Meta-Llama-3-8B) on ShareGPT
+    python main.py --dataset sharegt --mode pensieve \
+        --num-concurrent-users 6 --model meta-llama/Meta-Llama-3-8B \
+        --gpu-cache 40 --cpu-cache 100 --num-conversations 20
 
 Key Features:
-    - Concurrent benchmark: Simulates multiple users with different access patterns
-    - Automatic hotness distribution: HOT (frequent), WARM (normal), COLD (infrequent)
-    - Cache-aware batching: Unified PREFILL+GENERATION batches
-    - Eviction policy showcase: Shows intelligent cache management across sessions
+    - Demo mode: Quick test with hardcoded conversations
+    - Interactive mode: Multi-turn conversation with user input
+    - Dataset evaluation: Concurrent benchmark on ShareGPT dataset
+    - Hotness distribution: HOT (frequent), WARM (normal), COLD (infrequent) clients
+    - Cache statistics: Shows GPU/CPU cache hit rates and effectiveness
 """
 
 import argparse
@@ -61,8 +53,8 @@ def main():
         "--mode",
         type=str,
         default="pensieve",
-        choices=["pensieve", "vllm", "compare"],
-        help="Inference mode: 'pensieve' (stateful with KV cache), 'vllm' (stateless baseline), or 'compare' (run both and compare)",
+        choices=["pensieve", "vllm", "demo"],
+        help="Inference mode: 'pensieve' (stateful with KV cache), 'vllm' (stateless baseline), or 'demo' (hardcoded demo conversation)",
     )
 
     # Model selection
@@ -161,15 +153,14 @@ def main():
 
     if args.interactive:
         run_interactive(args)
-    elif args.mode == "compare":
-        # Use concurrent benchmark if num_concurrent_users > 1
-        if args.num_concurrent_users > 1:
-            run_concurrent_comparison(args)
-        else:
-            run_comparison(args)
     elif args.dataset:
+        # Dataset evaluation with concurrent users
         run_dataset_evaluation(args)
+    elif args.mode == "demo":
+        # Simple demo with hardcoded conversations
+        run_demo(args)
     else:
+        # Single-user inference (pensieve or vllm mode)
         run_demo(args)
 
 
@@ -405,28 +396,35 @@ def run_concurrent_comparison(args):
 
     # Define conversations for each client
     # Using different conversation sets so clients have diverse workloads
-    client_conversations = [
-        (
-            "session_1",
-            ["Hello, how are you?", "Tell me about Python", "What is machine learning?"],
-        ),
-        (
-            "session_2",
-            ["Hi there", "Explain AI", "How does deep learning work?"],
-        ),
-        (
-            "session_3",
-            ["What's up?", "Tell me about data science", "What is cloud computing?"],
-        ),
-        (
-            "session_4",
-            ["Hey", "Explain algorithms", "What is a neural network?"],
-        ),
-        (
-            "session_5",
-            ["Hello", "What is big data?", "Explain supervised learning"],
-        ),
-    ]
+    if hasattr(args, '_dataset_conversations') and args._dataset_conversations:
+        # Use ShareGPT conversations from dataset
+        client_conversations = args._dataset_conversations
+        print(f"✓ Using {len(client_conversations)} conversations from ShareGPT dataset")
+    else:
+        # Use hardcoded demo conversations (default)
+        client_conversations = [
+            (
+                "session_1",
+                ["Hello, how are you?", "Tell me about Python", "What is machine learning?"],
+            ),
+            (
+                "session_2",
+                ["Hi there", "Explain AI", "How does deep learning work?"],
+            ),
+            (
+                "session_3",
+                ["What's up?", "Tell me about data science", "What is cloud computing?"],
+            ),
+            (
+                "session_4",
+                ["Hey", "Explain algorithms", "What is a neural network?"],
+            ),
+            (
+                "session_5",
+                ["Hello", "What is big data?", "Explain supervised learning"],
+            ),
+        ]
+        print(f"✓ Using {len(client_conversations)} hardcoded demo conversations")
 
     # Define client-specific access patterns (hotness levels)
     # This creates realistic scenario where sessions have different access frequencies
@@ -909,19 +907,57 @@ def run_comparison(args):
 
 
 def run_dataset_evaluation(args):
-    """Run evaluation on a dataset."""
-    print(f"\n--- Dataset Evaluation ---")
-    print(f"Dataset: {args.dataset}")
-    print(f"Note: Dataset loading not yet implemented in demo")
-    print(f"Use --interactive or default demo mode for now\n")
+    """Run evaluation on ShareGPT/UltraChat dataset.
 
-    # TODO: Implement dataset loading (ShareGPT, UltraChat)
-    # For now, show how it would be used
-    print("Dataset evaluation will:")
-    print("  1. Load conversations from ShareGPT/UltraChat")
-    print("  2. Simulate multi-turn interactions")
-    print("  3. Measure prefill speedup over multiple turns")
-    print("  4. Report cache hit rates and throughput")
+    This function loads real multi-turn conversations from a dataset
+    and runs them through the concurrent comparison benchmark to demonstrate
+    Pensieve's advantage with cache reuse across turns.
+    """
+    from pensieve.utils.dataset_loader import load_sharept_dataset
+
+    print("\n" + "=" * 60)
+    print(f"Dataset Evaluation: {args.dataset.upper()}")
+    print("=" * 60)
+    print(f"\nLoading {args.num_conversations} conversations (max {args.max_turns} turns)...")
+    print()
+
+    # Load conversations from dataset
+    try:
+        if args.dataset == "sharegt":
+            conversations = load_sharept_dataset(
+                num_conversations=args.num_conversations,
+                max_turns=args.max_turns,
+                min_turns=2,
+            )
+        else:
+            raise NotImplementedError(f"Dataset '{args.dataset}' not yet supported. Use 'sharegt'.")
+    except Exception as e:
+        print(f"\n❌ Error loading dataset: {e}")
+        print("\nFallback: Using hardcoded demo conversations instead")
+        conversations = None
+
+    if conversations:
+        print(f"\n✓ Successfully loaded {len(conversations)} conversations from dataset")
+        total_turns = sum(len(turns) for _, turns in conversations)
+        avg_turns = total_turns / len(conversations)
+        print(f"  Total user turns: {total_turns}")
+        print(f"  Average turns per conversation: {avg_turns:.1f}")
+
+        # Inject dataset conversations into args
+        args._dataset_conversations = conversations
+
+    # Run concurrent comparison with dataset (or fallback to demo)
+    print("\n" + "=" * 60)
+    print("Running concurrent benchmark...")
+    print("=" * 60)
+
+    # If num_concurrent_users not specified, use default
+    if args.num_concurrent_users == 1:
+        args.num_concurrent_users = 3  # Default for dataset eval
+        print(f"\nDefaulting to {args.num_concurrent_users} concurrent users\n")
+
+    # Run the benchmark
+    run_concurrent_comparison(args)
 
 
 if __name__ == "__main__":
