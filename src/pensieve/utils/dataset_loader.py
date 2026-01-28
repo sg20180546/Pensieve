@@ -40,8 +40,7 @@ def load_sharept_dataset(
     # Note: This is a large dataset (~1GB), first load may take a while
     dataset = load_dataset(
         "anon8231489123/ShareGPT_Vicuna_unfiltered",
-        split="train",
-        trust_remote_code=False,
+        split="train"
     )
     # dataset = load_dataset(
     #     "m-a-p/CodeFeedback-Filtered-Instruction",
