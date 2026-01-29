@@ -22,10 +22,14 @@ from pensieve.worker.custom_cache import PensieveCacheFactory
 # Setup logging - control with PENSIEVE_DEBUG environment variable
 logger = logging.getLogger(__name__)
 _debug_enabled = os.getenv("PENSIEVE_DEBUG", "0") == "1"
-if _debug_enabled:
+_cache_debug_enabled = os.getenv("PENSIEVE_CACHE_DEBUG", "0") == "1"  # Cache-specific detailed logging
+if _debug_enabled or _cache_debug_enabled:
     logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('[DEBUG] %(message)s'))
+    if _cache_debug_enabled:
+        handler.setFormatter(logging.Formatter('[CACHE] %(message)s'))
+    else:
+        handler.setFormatter(logging.Formatter('[DEBUG] %(message)s'))
     if not logger.handlers:  # Avoid duplicate handlers
         logger.addHandler(handler)
 else:
@@ -340,11 +344,12 @@ class Worker:
                 expected_len = input_cache_len + input_seq_len
 
                 # ✅ DEBUG OUTPUT: Track KV cache growth per step
-                # logger.debug(f"[KV Cache Tracking] Step {step}, Session {session_id}")
-                # logger.debug(f"  Input cache length: {input_cache_len}")
-                # logger.debug(f"  Input token count: {input_seq_len}")
-                # logger.debug(f"  Expected output length: {expected_len}")
-                # logger.debug(f"  Actual output length: {output_cache_len}")
+                if _cache_debug_enabled:
+                    logger.debug(f"[Step {step}/{max_new_tokens}] Session {session_id}")
+                    logger.debug(f"  Input cache: {input_cache_len} tokens | New input: {input_seq_len} tokens")
+                    logger.debug(f"  Expected → Actual: {expected_len} → {output_cache_len} tokens")
+                    if input_cache_len > 0:
+                        logger.debug(f"  ✅ Cache reuse detected: {input_cache_len}/{expected_len} ({100*input_cache_len/expected_len:.1f}%)")
 
                 # ✅ CORRECTNESS CHECK: Ensure no duplication
                 if output_cache_len != expected_len:
@@ -406,7 +411,19 @@ class Worker:
                     break
 
             # Log generation summary for this session
-            logger.debug(f"[_custom_generate] Session {session_id}: Generated {len(generated_ids[req_idx])} tokens (max allowed: {max_new_tokens})")
+            tokens_generated = len(generated_ids[req_idx])
+            logger.debug(f"[_custom_generate] Session {session_id}: Generated {tokens_generated} tokens (max allowed: {max_new_tokens})")
+
+            # Cache status after generation
+            if _cache_debug_enabled and pensieve_cache is not None:
+                try:
+                    stats = pensieve_cache.get_statistics()
+                    logger.debug(f"  Cache after session: GPU={stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB) | "
+                                f"CPU={stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB) | "
+                                f"Drops={stats.num_dropped_chunks} | "
+                                f"GPU hits={stats.gpu_hit_count}, CPU hits={stats.cpu_hit_count}, Misses={stats.miss_count}")
+                except Exception as e:
+                    logger.debug(f"  (Could not get cache stats: {e})")
 
             # ✅ Store final KV for this session (already per-session, no req_idx needed)
             # CRITICAL: session_past_kv is already [1, num_heads, seq, head_dim] from per-session processing
@@ -417,6 +434,26 @@ class Worker:
             #     first_k, first_v = session_past_kv[0]
             #     if first_k is not None:
             #         logger.debug(f"_custom_generate] Packed session_id={session_id}, kv[0].shape={first_k.shape}")
+
+        # ✅ BATCH SUMMARY: Multi-token generation overview
+        if _cache_debug_enabled:
+            total_generated = sum(len(ids) for ids in generated_ids)
+            avg_tokens = total_generated / batch_size if batch_size > 0 else 0
+            logger.debug(f"\n[BATCH GENERATION COMPLETE]")
+            logger.debug(f"  Batch size: {batch_size} sessions")
+            logger.debug(f"  Total tokens generated: {total_generated}")
+            logger.debug(f"  Average tokens per session: {avg_tokens:.1f}")
+            if pensieve_cache is not None:
+                try:
+                    stats = pensieve_cache.get_statistics()
+                    logger.debug(f"  Final Cache State:")
+                    logger.debug(f"    GPU: {stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB)")
+                    logger.debug(f"    CPU: {stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB)")
+                    logger.debug(f"    Dropped: {stats.num_dropped_chunks} chunks")
+                    logger.debug(f"    Hit Rate: GPU={stats.gpu_hit_rate:.1%} CPU={stats.cpu_hit_rate:.1%} Misses={stats.miss_rate:.1%}")
+                except Exception as e:
+                    logger.debug(f"    (Could not get stats: {e})")
+            logger.debug("")
 
         # Reconstruct sequences
         all_sequences = []
@@ -430,7 +467,10 @@ class Worker:
                 ]
             )
             req = batch.requests[i]
-            logger.debug(f"[_custom_generate SUMMARY] req_id={req.request_id}, input_len={len(input_ids[i])}, generated_len={len(generated_ids[i])}, total_len={len(full_seq)}, max_allowed={max_new_tokens}")
+            if _cache_debug_enabled:
+                logger.debug(f"[SEQ {i}] req_id={req.request_id}, input={len(input_ids[i])}, generated={len(generated_ids[i])}, total={len(full_seq)}")
+            else:
+                logger.debug(f"[_custom_generate SUMMARY] req_id={req.request_id}, input_len={len(input_ids[i])}, generated_len={len(generated_ids[i])}, total_len={len(full_seq)}, max_allowed={max_new_tokens}")
             all_sequences.append(full_seq)
 
         # Pad to same length
