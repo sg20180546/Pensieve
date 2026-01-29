@@ -141,10 +141,15 @@ class PensieveCache(Cache):
                             chunk.chunk_id == position and
                             chunk.layer_idx == layer_idx):
                             chunk.update_access_time()
-                            all_keys.append(chunk.key_tensor)
-                            all_values.append(chunk.value_tensor)
-                            with open("/tmp/pensieve_cache_debug.log", "a") as f:
-                                f.write(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx})\n")
+                            # ✅ Only add non-empty chunks
+                            if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
+                                all_keys.append(chunk.key_tensor)
+                                all_values.append(chunk.value_tensor)
+                                with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                    f.write(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
+                            else:
+                                with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                    f.write(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
@@ -184,8 +189,13 @@ class PensieveCache(Cache):
                 session_chunks.sort(key=lambda c: c.chunk_id)
                 for chunk in session_chunks:
                     chunk.update_access_time()
-                    all_keys.append(chunk.key_tensor)
-                    all_values.append(chunk.value_tensor)
+                    # ✅ Only add non-empty chunks
+                    if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
+                        all_keys.append(chunk.key_tensor)
+                        all_values.append(chunk.value_tensor)
+                    else:
+                        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                            f.write(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
 
             if layer_idx == 0:
                 print(f"[CACHE_DEBUG] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}", flush=True)
