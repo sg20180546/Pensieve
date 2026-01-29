@@ -386,6 +386,9 @@ class PensieveServer:
         # Store response in request for conversation history tracking
         request.response_text = response
 
+        # ✅ Store TTFT for vLLM baseline (entire generation time as conservative estimate)
+        self.last_ttft_per_request = {request_id: elapsed}
+
         # Update statistics
         self.total_requests += 1
         self.total_tokens_generated += len(generated_ids)
