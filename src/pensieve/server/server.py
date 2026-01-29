@@ -240,7 +240,7 @@ class PensieveServer:
         )
 
         # Time prefill + generation
-        start_time = time.time()
+        # start_time = time.time()
 
         try:
             # Phase 4 Pipeline: Scheduler → Worker
@@ -251,8 +251,8 @@ class PensieveServer:
             worker = self._get_worker()
             batch_result = worker.execute_batch(batch, cache_plan)
 
-            elapsed = time.time() - start_time
-            self.total_prefill_time += elapsed
+            # elapsed = time.time() - start_time
+            self.total_prefill_time += batch_result.prefill_time
 
             # Extract response from batch result
             if request_id in batch_result.request_results:
