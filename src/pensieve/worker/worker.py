@@ -323,7 +323,16 @@ class Worker:
                 # Check input KV cache (what we're passing to the model)
                 input_cache = session_cache if step == 0 else session_past_kv
                 if input_cache is not None and len(input_cache) > 0:
-                    input_cache_len = input_cache[0][0].shape[2]  # sequence_length dimension
+                    # Handle both PensieveCache and standard HuggingFace cache tuples
+                    if hasattr(input_cache, 'get_seq_length'):
+                        # PensieveCache object
+                        input_cache_len = input_cache.get_seq_length()
+                    else:
+                        # Standard HuggingFace cache (tuple of tuples)
+                        try:
+                            input_cache_len = input_cache[0][0].shape[1]  # sequence_length dimension (axis 1)
+                        except (TypeError, IndexError):
+                            input_cache_len = 0
                 else:
                     input_cache_len = 0
                 
