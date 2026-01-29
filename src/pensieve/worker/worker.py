@@ -587,21 +587,10 @@ class Worker:
         # 1. Extract generated tokens per request
         generated_sequences = outputs.sequences
 
-        # ✅ Use original input lengths (BEFORE padding in _prepare_batch_inputs)
-        # This ensures we correctly extract generated tokens, not padded positions
-        if hasattr(outputs, 'original_input_lengths') and outputs.original_input_lengths:
-            input_len_per_req = outputs.original_input_lengths
-        else:
-            # Fallback if original_input_lengths not provided
-            input_len_per_req = [
-                len(req.input_ids) if req.input_ids.dim() > 0 else 1
-                for req in batch.requests
-            ]
-
         for i, req in enumerate(batch.requests):
-            # Extract tokens generated for this request
-            # (Everything after the input, using ORIGINAL input length before padding)
-            input_len = input_len_per_req[i]
+            # ✅ CRITICAL: Use DIRECT length from req.input_ids (most reliable)
+            # This avoids any batch sync issues with outputs.original_input_lengths
+            input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
             generated_ids = generated_sequences[i][input_len:]
 
             # Decode to string
@@ -609,9 +598,10 @@ class Worker:
                 generated_ids, skip_special_tokens=True
             )
 
-            # DEBUG: Token counting verification (FIXED: now using original input lengths)
-            logger.debug(f"[Pensieve DEBUG FIXED] req_id={req.request_id}, req_idx={i}, original_input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
-            logger.debug(f"  → full_seq length={len(generated_sequences[i])}, generated part={generated_sequences[i][input_len:]}")
+            # DEBUG: Token counting verification
+            logger.debug(f"[Pensieve DEBUG] req_id={req.request_id}, req_idx={i}, req.input_ids.len={input_len}, full_seq.len={len(generated_sequences[i])}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
+            if len(generated_ids) > 20:
+                logger.debug(f"  First 20 tokens: {generated_ids[:20]}")
 
             # Update request
             req.generated_tokens = generated_ids.tolist()
