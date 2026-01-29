@@ -96,6 +96,27 @@ class PensieveCache(Cache):
                             all_values.append(chunk.value_tensor)
                             break
 
+        # Fallback: If no chunks found via batch_info.positions, scan cache directly
+        # This handles cases where chunk_keys wasn't populated in Request object
+        if not all_keys:
+            # Get all session_ids from batch_info
+            session_ids = {info.get('session_id') for info in self.batch_info.values()}
+
+            # Collect all chunks for these sessions and this layer, sorted by chunk_id
+            found_chunks = {}  # {chunk_id: chunk}
+            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                for chunk in cache_dict.values():
+                    if (chunk.session_id in session_ids and
+                        chunk.layer_idx == layer_idx):
+                        found_chunks[chunk.chunk_id] = chunk
+
+            # Add chunks in order of chunk_id
+            for chunk_id in sorted(found_chunks.keys()):
+                chunk = found_chunks[chunk_id]
+                chunk.update_access_time()
+                all_keys.append(chunk.key_tensor)
+                all_values.append(chunk.value_tensor)
+
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
@@ -195,21 +216,37 @@ class PensieveCache(Cache):
         from pensieve.core.types import CHUNK_SIZE
 
         max_tokens = 0
+
+        # Try method 1: Use batch_info positions if available
         for request_id, request_info in self.batch_info.items():
-            positions = request_info.get('positions', [])  # chunk_ids
+            positions = request_info.get('positions', [])
             if positions:
                 max_chunk_id = max(positions)
+                session_id = request_info.get('session_id')
                 # Find actual size of last chunk
                 for cache_dict in [self.cache_manager.gpu_cache,
                                   self.cache_manager.cpu_cache]:
                     for chunk in cache_dict.values():
-                        if (chunk.session_id == request_info.get('session_id') and
+                        if (chunk.session_id == session_id and
                             chunk.chunk_id == max_chunk_id):
-                            # Total tokens = (max_chunk_id * CHUNK_SIZE) + tokens_in_last_chunk
                             last_chunk_tokens = chunk.num_tokens
                             total_tokens = (max_chunk_id * CHUNK_SIZE) + last_chunk_tokens
                             max_tokens = max(max_tokens, total_tokens)
                             break
+
+        # Method 2 fallback: If batch_info is incomplete, scan cache_manager directly
+        # This handles the case where chunk_keys wasn't properly populated in Request
+        if max_tokens == 0:
+            # Get session_ids from batch_info
+            session_ids = {info.get('session_id') for info in self.batch_info.values()}
+            # Scan all chunks for these sessions
+            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                for chunk in cache_dict.values():
+                    if chunk.session_id in session_ids:
+                        # Found a chunk for this session
+                        last_chunk_tokens = chunk.num_tokens
+                        total_tokens = (chunk.chunk_id * CHUNK_SIZE) + last_chunk_tokens
+                        max_tokens = max(max_tokens, total_tokens)
 
         return max_tokens
 
