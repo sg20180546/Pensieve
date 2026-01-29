@@ -84,6 +84,31 @@ class Worker:
         )
         self.hidden_size = model.config.hidden_size
 
+    def _get_seq_len_from_kv(self, kv_tensor: torch.Tensor) -> int:
+        """Get sequence length from KV cache tensor, handling different model formats.
+
+        Different transformer models use different tensor shapes for KV cache:
+        - Gemma-2 format: [batch, num_heads, seq_len, head_dim] → seq at dim=2
+        - Standard HF: [batch, seq_len, num_heads, head_dim] → seq at dim=1
+
+        Uses heuristic: if shape[1] < 256 (likely num_heads), use shape[2] for seq_len
+        Otherwise, use shape[1] for seq_len.
+        """
+        if kv_tensor is None or len(kv_tensor.shape) < 2:
+            return 0
+
+        shape = kv_tensor.shape
+        if len(shape) == 4:
+            # 4D tensor: determine which dimension is sequence
+            # Heuristic: if dim[1] is small (num_heads 8-128), then dim=2 is seq
+            if shape[1] < 256:  # shape[1] is likely num_heads
+                return shape[2]  # Gemma format: [batch, heads, seq, head_dim]
+            else:
+                return shape[1]  # Standard format: [batch, seq, heads, head_dim]
+        else:
+            # For other shapes, default to dim[1]
+            return shape[1]
+
     def execute_batch(
         self,
         batch: Batch,
@@ -345,7 +370,7 @@ class Worker:
                     else:
                         # Standard HuggingFace cache (tuple of tuples)
                         try:
-                            input_cache_len = input_cache[0][0].shape[1]  # sequence_length dimension (axis 1)
+                            input_cache_len = self._get_seq_len_from_kv(input_cache[0][0])
                         except (TypeError, IndexError):
                             input_cache_len = 0
                 else:
@@ -391,7 +416,7 @@ class Worker:
 
                 # Check output KV cache (what the model produced)
                 if outputs.past_key_values is not None and len(outputs.past_key_values) > 0:
-                    output_cache_len = outputs.past_key_values[0][0].shape[2]
+                    output_cache_len = self._get_seq_len_from_kv(outputs.past_key_values[0][0])
                 else:
                     output_cache_len = 0
 
@@ -422,7 +447,7 @@ class Worker:
                 if session_past_kv and len(session_past_kv) > 0:
                     first_k, first_v = session_past_kv[0]
                     if first_k is not None:
-                        kv_seq_len = first_k.shape[2]  # Get sequence dimension
+                        kv_seq_len = self._get_seq_len_from_kv(first_k)
                         if step == 0:
                             logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
                         elif step % 5 == 0 or step == max_new_tokens - 1:  # Log every 5 steps and last step
@@ -482,7 +507,7 @@ class Worker:
             if session_past_kv and len(session_past_kv) > 0:
                 final_k, final_v = session_past_kv[0]
                 if final_k is not None:
-                    final_seq_len = final_k.shape[2]
+                    final_seq_len = self._get_seq_len_from_kv(final_k)
                     expected_final_seq = len(req_input_ids) + tokens_generated
                     logger.debug(f"[FINAL KV] {session_id}: final_k.shape={final_k.shape}, seq_len={final_seq_len}, expected={expected_final_seq}")
                     if final_seq_len != expected_final_seq:
@@ -513,7 +538,7 @@ class Worker:
                                 if session_past_kv and len(session_past_kv) > 0:
                                     recovered_k, recovered_v = session_past_kv[0]
                                     if recovered_k is not None:
-                                        recovered_seq_len = recovered_k.shape[2]
+                                        recovered_seq_len = self._get_seq_len_from_kv(recovered_k)
                                         logger.debug(f"[TOKEN RECOVERY] After recovery: seq_len={recovered_seq_len}, expected={expected_final_seq}")
                                         if recovered_seq_len == expected_final_seq:
                                             logger.info(f"✅ TOKEN RECOVERY SUCCESS! Recovered {token_loss} missing token(s). Now has {recovered_seq_len} tokens")
@@ -960,7 +985,7 @@ class Worker:
                 # seq_len (dim=2) includes everything: prev_context + input + new_generated
 
                 # Calculate where new tokens start
-                total_seq_len = k.shape[2]  # Total sequence length (dim=2)
+                total_seq_len = self._get_seq_len_from_kv(k)  # Total sequence length
 
                 # ✅ CRITICAL FIX: On Turn 1 (no existing chunks), store ALL tokens, not just generated
                 # Turn 1: existing_positions=[] → store everything (input + generated)
@@ -978,7 +1003,7 @@ class Worker:
 
                 # ✅ DEBUG for Turn 2+: Verify extracted token count
                 if existing_positions and layer_idx == 0:
-                    tokens_extracted = new_key.shape[2]
+                    tokens_extracted = self._get_seq_len_from_kv(new_key)
                     logger.debug(f"[DEBUG TURN 2+] session_id={session_id}: num_generated={num_generated}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, tokens_extracted={tokens_extracted}")
                     if tokens_extracted != num_generated:
                         logger.error(f"❌ TURN 2+ TOKEN MISMATCH! Expected to extract {num_generated} new tokens but got {tokens_extracted}")
@@ -986,7 +1011,7 @@ class Worker:
                 # ✅ RECALCULATE remaining_new for Turn 1 case
                 if not existing_positions:
                     # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
-                    tokens_stored = new_key.shape[2]  # Actual tokens in extracted tensor
+                    tokens_stored = self._get_seq_len_from_kv(new_key)  # Actual tokens in extracted tensor
                     if layer_idx == 0:  # Only recalculate once per request
                         logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: input_len={input_len}, num_generated={num_generated}")
                         logger.debug(f"[DEBUG TURN 1] k.shape={k.shape}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}")
