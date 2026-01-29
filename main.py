@@ -328,13 +328,16 @@ def concurrent_client_worker_async(
     """
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
-    request_ids = []
+    request_info = []  # List of (request_id, submit_time) tuples
 
-    # Phase 1: Submit all requests (non-blocking)
+    # Phase 1: Submit all requests (non-blocking) - record submission times
     for turn_idx, user_input in enumerate(conversations):
         # Wait before sending next request
         if turn_idx > 0:
             time.sleep(request_interval)
+
+        # Record submission time
+        submit_start = time.time()
 
         # Submit async (returns immediately)
         request_id = server.submit_request_async(
@@ -342,17 +345,22 @@ def concurrent_client_worker_async(
             user_input,
             max_new_tokens=32,
         )
-        request_ids.append(request_id)
 
-    # Phase 2: Collect results (blocking wait)
-    for request_id in request_ids:
+        submit_time = time.time() - submit_start
+        request_info.append((request_id, submit_time))
+
+    # Phase 2: Collect results (blocking wait) - measure retrieval time
+    for request_id, submit_time in request_info:
         try:
-            # Wait for result (with timeout)
+            # Wait for result (with timeout) and measure retrieval time
+            retrieve_start = time.time()
             response = server.get_request_result(request_id, timeout=30.0)
+            retrieve_time = time.time() - retrieve_start
+
             if response:
-                # Note: For async batched execution, TTFT measurements are accumulated in server.all_ttfts
-                # We don't collect per-client TTFT here; instead, main.py uses server.all_ttfts directly
-                tail_latencies.append(0.2)  # Placeholder (actual per-request timing would need batch_result)
+                # Tail latency = submission overhead + retrieval time
+                tail_latency = submit_time + retrieve_time
+                tail_latencies.append(tail_latency)
         except Exception as e:
             print(f"Error retrieving result {request_id} for client {client_id}: {e}")
 
@@ -668,10 +676,10 @@ def run_concurrent_comparison(args):
     print(f"{'Throughput Speedup':<30} {throughput_speedup:.2f}x")
 
     # TTFT comparison
-    print(f"\n{'Avg TTFT':<30} {pensieve_avg_ttft*1000:.1f}ms{'':<13} {vllm_avg_ttft*1000:.1f}ms")
-    print(f"{'P99 TTFT':<30} {pensieve_p99_ttft*1000:.1f}ms{'':<13} {vllm_p99_ttft*1000:.1f}ms")
-    ttft_speedup = vllm_avg_ttft / pensieve_avg_ttft if pensieve_avg_ttft > 0 else 0
-    print(f"{'TTFT Speedup (avg)':<30} {ttft_speedup:.2f}x")
+    # print(f"\n{'Avg TTFT':<30} {pensieve_avg_ttft*1000:.1f}ms{'':<13} {vllm_avg_ttft*1000:.1f}ms")
+    # print(f"{'P99 TTFT':<30} {pensieve_p99_ttft*1000:.1f}ms{'':<13} {vllm_p99_ttft*1000:.1f}ms")
+    # ttft_speedup = vllm_avg_ttft / pensieve_avg_ttft if pensieve_avg_ttft > 0 else 0
+    # print(f"{'TTFT Speedup (avg)':<30} {ttft_speedup:.2f}x")
 
     # Tail latency comparison
     print(f"\n{'Avg Latency':<30} {pensieve_avg_tail*1000:.1f}ms{'':<13} {vllm_avg_tail*1000:.1f}ms")

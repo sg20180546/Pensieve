@@ -365,7 +365,7 @@ class PensieveServer:
             # else:
             if past_key_values is not None:
                 if decode_call_count[0] == 0:
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()
                     elapsed = time.time() - start
                     timing_data['prefill_time'] = elapsed
                 # Decode: processing single token (with KV cache)
@@ -373,7 +373,7 @@ class PensieveServer:
 
                 # First decode call = first token generation
                 if decode_call_count[0] == 1:
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()
                     elapsed = time.time() - start
                     timing_data['first_token_time'] = elapsed
                 # else:
