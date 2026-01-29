@@ -69,6 +69,9 @@ class PensieveCache(Cache):
             Tuple of (key_tensor, value_tensor)
             - Shape: [batch_size, seq_len, num_heads, head_dim]
         """
+        import sys
+        print(f"\n[CACHE_DEBUG] __getitem__ CALLED with layer_idx={layer_idx}", file=sys.stderr, flush=True)
+
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
             return self._layer_kv_cache[layer_idx]
