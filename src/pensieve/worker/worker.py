@@ -317,14 +317,14 @@ class Worker:
                 session_past_kv = outputs.past_key_values
 
                 # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
-                if step == 0 and session_past_kv:
-                    first_k, first_v = session_past_kv[0]
-                    if first_k is not None:
-                        logger.debug(f"_custom_generate] After forward step {step}: first_k.shape={first_k.shape} (batch={first_k.shape[0]})")
-                        logger.debug(f"_custom_generate] dtype: first_k={first_k.dtype}, first_v={first_v.dtype}")
-                        if first_k.shape[0] == 0:
-                            logger.error(f"❌ ERROR: KV batch size is 0! Input was [1, {step_input_ids.shape[1]}]")
-                            logger.error(f"   step_input_ids.shape={step_input_ids.shape}, logits.shape={logits.shape}")
+                # if step == 0 and session_past_kv:
+                #     first_k, first_v = session_past_kv[0]
+                #     if first_k is not None:
+                #         logger.debug(f"_custom_generate] After forward step {step}: first_k.shape={first_k.shape} (batch={first_k.shape[0]})")
+                #         logger.debug(f"_custom_generate] dtype: first_k={first_k.dtype}, first_v={first_v.dtype}")
+                #         if first_k.shape[0] == 0:
+                #             logger.error(f"❌ ERROR: KV batch size is 0! Input was [1, {step_input_ids.shape[1]}]")
+                #             logger.error(f"   step_input_ids.shape={step_input_ids.shape}, logits.shape={logits.shape}")
 
                 # Get next token logits
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
