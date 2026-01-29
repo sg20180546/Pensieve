@@ -79,7 +79,8 @@ class PensieveCache(Cache):
 
         Returns:
             Tuple of (key_tensor, value_tensor)
-            - Shape: [batch_size, seq_len, num_heads, head_dim]
+            - Shape: [batch, heads, seq, head_dim] for Gemma-2
+                  or [batch, seq, heads, head_dim] for Llama/Standard
         """
         import sys
         import traceback
@@ -256,7 +257,13 @@ class PensieveCache(Cache):
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
-        self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
+        # ✅ FIX: Detect tensor format correctly for both Gemma and Llama
+        # Gemma-2: [batch, heads, seq, head_dim] → seq at dim=2
+        # Llama: [batch, seq, heads, head_dim] → seq at dim=1
+        if len(keys.shape) == 4 and keys.shape[1] < 256:
+            self._seq_length = keys.shape[2]  # Gemma format
+        else:
+            self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0  # Llama or others
 
         self._write_debug_log(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
