@@ -321,7 +321,8 @@ class Worker:
 
                 # ✅ DEBUG: KV cache accumulation tracking
                 # Check input KV cache (what we're passing to the model)
-                input_cache = session_cache if step == 0 else session_past_kv
+                # input_cache = session_cache if step == 0 else session_past_kv
+                input_cache=session_past_kv
                 if input_cache is not None and len(input_cache) > 0:
                     # Handle both PensieveCache and standard HuggingFace cache tuples
                     if hasattr(input_cache, 'get_seq_length'):
@@ -349,6 +350,7 @@ class Worker:
                         logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
                 # print(input_cache.len())/
                 # print(input_cache.shape)
+                # print(input_cache)
                 print(input_cache)
                 
                 # Forward pass - with session-specific cache
