@@ -372,7 +372,8 @@ class PensieveServer:
         finally:
             # Restore original forward
             self.model.forward = original_forward
-
+        print(timing_data['first_token_time']+timing_data['prefill_time'])
+        print(timing_data['prefill_time'])
         return outputs, timing_data['prefill_time'], timing_data['first_token_time'], timing_data['decode_time']
 
     def _process_vllm_baseline(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
