@@ -593,7 +593,7 @@ def run_concurrent_comparison(args):
     _ = vllm_server.tokenizer  # Trigger tokenizer loading
     print("✓ vLLM model pre-loaded successfully")
 
-    # Launch concurrent client threads with SAME access pattern
+    # ✅ Launch concurrent client threads with SAME access pattern (ASYNC for fair comparison)
     vllm_results_queue = Queue()
     vllm_threads = []
 
@@ -602,7 +602,7 @@ def run_concurrent_comparison(args):
     for client_id in range(num_users):
         _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker,
+            target=concurrent_client_worker_async,  # ✅ Use async version for fair comparison with Pensieve
             args=(
                 client_id,
                 vllm_server,
