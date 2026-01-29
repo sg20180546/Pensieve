@@ -252,14 +252,15 @@ class PensieveServer:
 
         # Time prefill + generation
 
-
         try:
+            # Initialize worker first (this also initializes cache and scheduler)
+            worker = self._get_worker()
+
             # Phase 4 Pipeline: Scheduler → Worker
             self.scheduler.add_request(request)
             batch, cache_plan = self.scheduler.form_next_batch()
 
-            # Get worker and execute batch
-            worker = self._get_worker()
+            # Execute batch
             batch_result = worker.execute_batch(batch, cache_plan)
 
             # Accumulate timing metrics (thread-safe with lock)
