@@ -242,6 +242,9 @@ class Worker:
             req_input_ids = input_ids[req_idx:req_idx+1]  # [1, seq_len]
             req_attention_mask = attention_mask[req_idx:req_idx+1]  # [1, seq_len]
 
+            # ✅ DEBUG: Check batch extraction (Scenario 2)
+            logger.debug(f"_custom_generate] Session {session_id}: req_input_ids.shape={req_input_ids.shape}, req_attention_mask.shape={req_attention_mask.shape}")
+
             # Get cached KV for this session (if available in pensieve_cache)
             # KEY: Only pass cache to model if it has data
             # - If empty: pass None (HF computes new KV)
@@ -312,6 +315,15 @@ class Worker:
                 # Extract outputs
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
+
+                # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
+                if step == 0 and session_past_kv:
+                    first_k, first_v = session_past_kv[0]
+                    if first_k is not None:
+                        logger.debug(f"_custom_generate] After forward step {step}: first_k.shape={first_k.shape} (batch={first_k.shape[0]})")
+                        if first_k.shape[0] == 0:
+                            logger.error(f"❌ ERROR: KV batch size is 0! Input was [1, {step_input_ids.shape[1]}]")
+                            logger.error(f"   step_input_ids.shape={step_input_ids.shape}, logits.shape={logits.shape}")
 
                 # Get next token logits
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
@@ -480,6 +492,13 @@ class Worker:
             seq_len = len(req.input_ids) if req.input_ids.dim() > 0 else 0
             max_len = max(max_len, seq_len)
 
+        # ✅ DEBUG: Check for empty input scenario
+        logger.debug(f"_prepare_batch_inputs] batch_size={len(batch.requests)}, max_seq_len={max_len}")
+        if max_len == 0:
+            logger.warning(f"⚠️ WARNING: All requests have empty input_ids! batch_size={len(batch.requests)}")
+            for i, req in enumerate(batch.requests):
+                logger.warning(f"   Request {i}: input_ids.shape={req.input_ids.shape}, dim={req.input_ids.dim()}")
+
         input_ids_list = []
 
         # Pad all sequences to max length
@@ -592,6 +611,11 @@ class Worker:
                                 # session_kv is tuple of (k, v) for each layer
                                 # Each k, v has shape [batch, num_heads, seq_len, head_dim]
                                 # Extract k[req_idx:req_idx+1, ...], v[req_idx:req_idx+1, ...]
+
+                                # ✅ DEBUG: Check raw session_kv before extraction (Scenario 2)
+                                raw_k, raw_v = session_kv[0]
+                                logger.debug(f"_process_outputs] Before extraction: raw_k.shape={raw_k.shape if raw_k is not None else None}, raw_v.shape={raw_v.shape if raw_v is not None else None}, req_idx={req_idx}")
+
                                 session_kv_single = tuple(
                                     (
                                         k[req_idx:req_idx+1, ...] if k is not None else None,
@@ -603,6 +627,10 @@ class Worker:
                                 first_k, first_v = session_kv_single[0]
                                 if first_k is not None:
                                     logger.debug(f"_process_outputs] After extraction: first_k.shape={first_k.shape}, first_v.shape={first_v.shape}")
+                                    if first_k.shape[0] == 0:
+                                        logger.error(f"❌ ERROR: After extraction batch size is 0!")
+                                        logger.error(f"   raw_k.shape={raw_k.shape}, req_idx={req_idx}")
+                                        logger.error(f"   This is SCENARIO 2: Batch extraction mismatch")
                                 self._store_new_kv_chunks(batch, session_kv_single, session_id)
                         else:
                             # Fallback: assume it's direct KV
@@ -669,8 +697,12 @@ class Worker:
             input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
             num_generated = len(req.generated_tokens)
 
+            # ✅ DEBUG: Check input/generated token counts (Scenario 3)
+            logger.debug(f"_store_new_kv_chunks] session_id={session_id}: input_len={input_len}, num_generated={num_generated}")
+
             if num_generated == 0:
                 # No new tokens generated
+                logger.debug(f"_store_new_kv_chunks] session_id={session_id}: No tokens generated, returning early")
                 return
 
             # Determine new chunk_ids based on existing chunks
@@ -733,6 +765,15 @@ class Worker:
                 new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
                 new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
 
+                # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
+                if layer_idx == 0:
+                    logger.debug(f"_store_new_kv_chunks] After extraction: new_key.shape={new_key.shape}, new_value.shape={new_value.shape}")
+                    if new_key.shape[0] == 0:
+                        logger.error(f"❌ ERROR FOUND: new_key batch size is 0!")
+                        logger.error(f"   k.shape={k.shape} (batch={k.shape[0]})")
+                        logger.error(f"   total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, num_generated={num_generated}")
+                        logger.error(f"   This suggests k.shape[0] was already 0 from model output (Scenario 1 or 2)")
+
                 # ✅ CRITICAL: Handle last chunk merge
                 if fill_last > 0 and last_chunk_id >= 0:
                     # Get last chunk to update it
@@ -747,6 +788,15 @@ class Worker:
                         # ✅ Move fill tensors to CPU to match last_chunk (which is stored in CPU)
                         fill_key = fill_key.cpu()
                         fill_value = fill_value.cpu()
+
+                        # ✅ DEBUG: Capture the merge scenario (just before error)
+                        if layer_idx == 0:
+                            logger.debug(f"_store_new_kv_chunks] About to merge:")
+                            logger.debug(f"   last_chunk.key_tensor.shape={last_chunk.key_tensor.shape} (batch={last_chunk.key_tensor.shape[0]})")
+                            logger.debug(f"   fill_key.shape={fill_key.shape} (batch={fill_key.shape[0]})")
+                            if last_chunk.key_tensor.shape[0] != fill_key.shape[0]:
+                                logger.error(f"❌ BATCH MISMATCH: {last_chunk.key_tensor.shape[0]} != {fill_key.shape[0]}")
+                                logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
 
                         # Concatenate with existing last chunk KV (concatenate along seq_len dimension)
                         merged_key = torch.cat(
