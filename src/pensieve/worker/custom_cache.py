@@ -313,6 +313,8 @@ class PensieveCache(Cache):
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
+        cache_position: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> None:
         """Update cache with newly computed KV tensors.
 
@@ -322,6 +324,8 @@ class PensieveCache(Cache):
             key_states: New key tensor from model
             value_states: New value tensor from model
             layer_idx: Which layer these tensors are from
+            cache_position: Optional cache position tensor (newer HuggingFace versions)
+            **kwargs: Additional arguments for compatibility with different HuggingFace versions
         """
         # Store in our layer cache
         self._layer_kv_cache[layer_idx] = (key_states, value_states)
@@ -467,8 +471,18 @@ class SimpleCacheWrapper:
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
+        cache_position: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> None:
-        """Update cache with new KV."""
+        """Update cache with new KV.
+
+        Args:
+            key_states: New key tensor from model
+            value_states: New value tensor from model
+            layer_idx: Which layer these tensors are from
+            cache_position: Optional cache position tensor (newer HuggingFace versions)
+            **kwargs: Additional arguments for compatibility with different HuggingFace versions
+        """
         self._cache[layer_idx] = (key_states, value_states)
 
     def reset(self) -> None:
