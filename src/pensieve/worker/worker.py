@@ -916,7 +916,9 @@ class Worker:
                     # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
                     tokens_stored = new_key.shape[2]  # Actual tokens in extracted tensor
                     if layer_idx == 0:  # Only recalculate once per request
-                        logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
+                        logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: input_len={input_len}, num_generated={num_generated}")
+                        logger.debug(f"[DEBUG TURN 1] k.shape={k.shape}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}")
+                        logger.debug(f"[DEBUG TURN 1] new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
                         remaining_new = tokens_stored - fill_last
                         # Update total_tokens to reflect actual stored tokens
                         total_tokens = tokens_stored
@@ -938,6 +940,9 @@ class Worker:
                     # Get last chunk to update it
                     last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
                     last_chunk = self.cache.get_chunk(last_chunk_key)
+
+                    if layer_idx == 0:
+                        logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
 
                     if last_chunk:
                         # Extract tokens to fill last chunk (dim=2 is seq_len)
@@ -994,10 +999,17 @@ class Worker:
                 remaining_key = new_key[:, :, fill_last:, :]  # [batch, heads, remaining_new, head_dim]
                 remaining_value = new_value[:, :, fill_last:, :]
 
+                if layer_idx == 0 and not existing_positions:
+                    logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: remaining_key.shape={remaining_key.shape}, fill_last={fill_last}, remaining_new={remaining_new}")
+                    logger.debug(f"[DEBUG CHUNKS] Will create {(remaining_new + chunk_size - 1) // chunk_size} chunks")
+
                 for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
                     # Calculate token range for this chunk
                     chunk_start = chunk_idx * chunk_size
                     chunk_end = min(chunk_start + chunk_size, remaining_new)
+
+                    if layer_idx == 0 and not existing_positions:
+                        logger.debug(f"[DEBUG CHUNKS] chunk_idx={chunk_idx}: chunk_start={chunk_start}, chunk_end={chunk_end}, extracted_size={chunk_end - chunk_start}")
 
                     # Extract chunk tokens (from seq_len dimension = dim=2)
                     chunk_key = remaining_key[:, :, chunk_start:chunk_end, :]
