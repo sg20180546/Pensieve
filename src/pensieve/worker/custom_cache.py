@@ -315,7 +315,7 @@ class PensieveCache(Cache):
         layer_idx: int,
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> None:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Update cache with newly computed KV tensors.
 
         Called by HuggingFace models after computing new KV tokens during forward pass.
@@ -326,9 +326,14 @@ class PensieveCache(Cache):
             layer_idx: Which layer these tensors are from
             cache_position: Optional cache position tensor (newer HuggingFace versions)
             **kwargs: Additional arguments for compatibility with different HuggingFace versions
+
+        Returns:
+            Tuple of (key_states, value_states) for HuggingFace models to use
         """
         # Store in our layer cache
         self._layer_kv_cache[layer_idx] = (key_states, value_states)
+        # Return the updated states (required by HuggingFace)
+        return key_states, value_states
 
     def get_seq_length(self) -> int:
         """Get current sequence length in cache.
