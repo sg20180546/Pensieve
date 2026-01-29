@@ -451,7 +451,8 @@ class PensieveServer:
 
         # Calculate TTFT (Time to First Token) = prefill + first token generation
         ttft = prefill_time + first_token_time
-
+        print("sj ttft",ttft)
+        print("sj self.total_generation_time ",self.total_generation_time)
         # Accumulate measured times
         self.total_prefill_time += prefill_time
         self.total_generation_time += remaining_decode_time + first_token_time  # Total generation (first + remaining)
