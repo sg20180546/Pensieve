@@ -252,8 +252,8 @@ class PensieveServer:
         #     input_to_encode = user_input
         # else:
         #     # Turn 1: No cache yet, encode full conversation (history is empty on Turn 1)
-        input_to_encode = history + user_input
-        # input_to_encode =user_input
+        # input_to_encode = history + user_input
+        input_to_encode =user_input
         # Encode input
         input_ids = self.tokenizer.encode(input_to_encode, return_tensors='pt')
         input_ids = input_ids.squeeze(0)

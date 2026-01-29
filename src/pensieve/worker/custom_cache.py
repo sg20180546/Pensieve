@@ -165,9 +165,9 @@ class PensieveCache(Cache):
                             if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
                                 all_keys.append(chunk.key_tensor)
                                 all_values.append(chunk.value_tensor)
-                                self._write_debug_log(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
+                                print(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
                             else:
-                                self._write_debug_log(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
+                                print(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
@@ -212,7 +212,7 @@ class PensieveCache(Cache):
                         all_keys.append(chunk.key_tensor)
                         all_values.append(chunk.value_tensor)
                     else:
-                        self._write_debug_log(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
+                        print(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
 
             if layer_idx == 0:
                 print(f"[CACHE_DEBUG] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}", flush=True)
@@ -220,7 +220,7 @@ class PensieveCache(Cache):
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
-            self._write_debug_log(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
+            print(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
 
             # ✅ CRITICAL: Detect actual tensor shape to concatenate at correct dimension
             # Gemma-2 uses [batch, heads, seq, head_dim]
@@ -239,10 +239,10 @@ class PensieveCache(Cache):
                 # Default to dim=1 for 2D or other cases
                 seq_dim = 1
 
-            self._write_debug_log(f"[CACHE_DEBUG] Detected tensor format: dim={sample_key.dim()}, shape={sample_key.shape}, concat_at_dim={seq_dim}\n")
+            print(f"[CACHE_DEBUG] Detected tensor format: dim={sample_key.dim()}, shape={sample_key.shape}, concat_at_dim={seq_dim}\n")
             keys = torch.cat(all_keys, dim=seq_dim)  # Concatenate along detected sequence dimension
             values = torch.cat(all_values, dim=seq_dim)
-            self._write_debug_log(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
         else:
             # No cached KV for this layer, return empty tensors
             # Model will treat this as no past_key_values for this layer
@@ -250,10 +250,11 @@ class PensieveCache(Cache):
                    f"all_keys length: {len(all_keys)}\n"
                    f"all_values length: {len(all_values)}\n"
                    f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
-            self._write_debug_log(msg)
+            print(msg)
             keys = torch.empty(0, dtype=torch.float16)
             values = torch.empty(0, dtype=torch.float16)
-            self._write_debug_log(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            print("[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            # print(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
@@ -265,7 +266,7 @@ class PensieveCache(Cache):
         else:
             self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0  # Llama or others
 
-        self._write_debug_log(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
+        print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
     def is_empty(self) -> bool:
