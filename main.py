@@ -1065,9 +1065,9 @@ def run_dataset_evaluation(args):
     print("=" * 60)
 
     # If num_concurrent_users not specified, use default
-    if args.num_concurrent_users == 1:
-        args.num_concurrent_users = 3  # Default for dataset eval
-        print(f"\nDefaulting to {args.num_concurrent_users} concurrent users\n")
+    # if args.num_concurrent_users == 1:
+    #     args.num_concurrent_users = 3  # Default for dataset eval
+    #     print(f"\nDefaulting to {args.num_concurrent_users} concurrent users\n")
 
     # Run the benchmark
     run_concurrent_comparison(args)
