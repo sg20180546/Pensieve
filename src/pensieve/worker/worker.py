@@ -508,7 +508,8 @@ class Worker:
                 final_k, final_v = session_past_kv[0]
                 if final_k is not None:
                     final_seq_len = self._get_seq_len_from_kv(final_k)
-                    expected_final_seq = len(req_input_ids) + tokens_generated
+                    input_seq_len = req_input_ids.shape[1] if req_input_ids.dim() > 1 else 1
+                    expected_final_seq = input_seq_len + tokens_generated
                     logger.debug(f"[FINAL KV] {session_id}: final_k.shape={final_k.shape}, seq_len={final_seq_len}, expected={expected_final_seq}")
                     if final_seq_len != expected_final_seq:
                         logger.error(f"❌ KV SEQ LEN MISMATCH! Expected {expected_final_seq} but got {final_seq_len}")
