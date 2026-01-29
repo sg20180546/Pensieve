@@ -226,7 +226,7 @@ class PensieveServer:
 
         # Get conversation history
         history = self._get_session_history(session_id)
-        print("Penseive history",history)
+        # print("Penseive history",history)
         # Encode input
         full_input = history + user_input
         input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
@@ -420,7 +420,7 @@ class PensieveServer:
 
         # Get conversation history (full recomputation in vLLM mode)
         history = self._get_session_history(session_id)
-        print("vllm history",history)
+        # print("vllm history",history)
 
         # Full input includes all history + new user input
         full_input = history + user_input
@@ -497,7 +497,7 @@ class PensieveServer:
         # self.last_ttft_per_request = {}  # Don't report TTFT for vLLM
 
         # DEBUG: Token counting verification
-        print(f"[vLLM DEBUG] input_ids shape: {input_ids.shape}, input_len: {input_ids.shape[1]}, generated_tokens: {len(generated_ids)}, response_len: {len(response)}")
+        # print(f"[vLLM DEBUG] input_ids shape: {input_ids.shape}, input_len: {input_ids.shape[1]}, generated_tokens: {len(generated_ids)}, response_len: {len(response)}")
 
         # Update statistics
         self.total_requests += 1
