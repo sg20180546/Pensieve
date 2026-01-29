@@ -537,6 +537,7 @@ def run_concurrent_comparison(args):
     print(f"\n{pensieve_stats}")
 
     # Calculate Pensieve metrics
+    print("sj all_pensieve_ttfts",all_pensieve_ttfts)
     pensieve_avg_ttft = mean(all_pensieve_ttfts) if all_pensieve_ttfts else 0
     pensieve_p99_ttft = (
         sorted(all_pensieve_ttfts)[int(len(all_pensieve_ttfts) * 0.99)]
@@ -634,6 +635,8 @@ def run_concurrent_comparison(args):
     print(f"\n{vllm_stats}")
 
     # Calculate vLLM metrics
+    print("sj all_vllm_ttfts",all_vllm_ttfts)
+
     vllm_avg_ttft = mean(all_vllm_ttfts) if all_vllm_ttfts else 0
     vllm_p99_ttft = (
         sorted(all_vllm_ttfts)[int(len(all_vllm_ttfts) * 0.99)]
