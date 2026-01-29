@@ -69,9 +69,23 @@ class PensieveCache(Cache):
             Tuple of (key_tensor, value_tensor)
             - Shape: [batch_size, seq_len, num_heads, head_dim]
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
             return self._layer_kv_cache[layer_idx]
+
+        # Debug: Log cache state on first call
+        if layer_idx == 0:
+            logger.debug(f"[CACHE] __getitem__ called: batch_info.positions={[info.get('positions', []) for info in self.batch_info.values()]}")
+            # List all chunks in cache_manager
+            all_chunks = {}
+            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                for key, chunk in cache_dict.items():
+                    if key not in all_chunks:
+                        all_chunks[key] = chunk
+            logger.debug(f"[CACHE] Cache_manager chunks: {[(c.session_id, c.chunk_id, c.layer_idx) for c in all_chunks.values()]}")
 
         # Gather KV from all requests in batch for this specific layer
         # Chunks are ordered by (session_id, chunk_id, layer_idx)
@@ -102,20 +116,31 @@ class PensieveCache(Cache):
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
+            # Debug: Log what we're looking for
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"[CACHE] Fallback scan: session_ids={session_ids}, layer_idx={layer_idx}")
+            logger.debug(f"[CACHE] Available chunks: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)}")
+
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
-            found_chunks = {}  # {chunk_id: chunk}
+            found_chunks = {}  # {(session_id, chunk_id): chunk}
             for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
                 for chunk in cache_dict.values():
-                    if (chunk.session_id in session_ids and
-                        chunk.layer_idx == layer_idx):
-                        found_chunks[chunk.chunk_id] = chunk
+                    if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
+                        key = (chunk.session_id, chunk.chunk_id)
+                        found_chunks[key] = chunk
+                        logger.debug(f"[CACHE] Found chunk: {key}")
 
-            # Add chunks in order of chunk_id
-            for chunk_id in sorted(found_chunks.keys()):
-                chunk = found_chunks[chunk_id]
-                chunk.update_access_time()
-                all_keys.append(chunk.key_tensor)
-                all_values.append(chunk.value_tensor)
+            # Add chunks in order of chunk_id (grouped by session_id)
+            for session_id in sorted(session_ids):
+                session_chunks = [chunk for (sid, _), chunk in found_chunks.items() if sid == session_id]
+                session_chunks.sort(key=lambda c: c.chunk_id)
+                for chunk in session_chunks:
+                    chunk.update_access_time()
+                    all_keys.append(chunk.key_tensor)
+                    all_values.append(chunk.value_tensor)
+
+            logger.debug(f"[CACHE] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}")
 
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
