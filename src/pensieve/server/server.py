@@ -373,6 +373,8 @@ class PensieveServer:
 
                 # First decode call = first token generation
                 if decode_call_count[0] == 1:
+                    torch.cuda.synchronize()
+                    elapsed = time.time() - start
                     timing_data['first_token_time'] = elapsed
                 # else:
                     # Remaining tokens
