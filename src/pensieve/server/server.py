@@ -117,7 +117,8 @@ class PensieveServer:
 
             # Determine appropriate dtype based on model size
             # Use bfloat16 for larger models (llama, etc.) to save memory
-            torch_dtype = torch.bfloat16 if 'llama' in self.model_name.lower() else torch.float32
+            # torch_dtype = torch.bfloat16 if 'llama' in self.model_name.lower() else torch.float32
+            torch_dtype = torch.bfloat16 if any(x in self.model_name.lower() for x in ['llama', 'gemma']) else torch.float32
 
             print(f"Loading {self.model_name} with dtype={torch_dtype} on device={self.device}")
 
