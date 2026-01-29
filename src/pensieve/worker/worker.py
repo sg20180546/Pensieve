@@ -861,7 +861,6 @@ class Worker:
 
             # ✅ DEBUG: Track chunk allocation
             logger.debug(f"[DEBUG _store_new_kv_chunks] session_id={session_id}, num_generated={num_generated}, fill_last={fill_last}, remaining_new={remaining_new}, last_chunk_id={last_chunk_id}, existing_positions={existing_positions}")
-            logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before if 'actual_context_before' not in locals() else 0}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
             # ✅ Calculate actual context_length considering metadata
             if metadata:
@@ -872,6 +871,9 @@ class Worker:
             # Total tokens after this generation
             total_tokens = metadata.total_tokens + num_generated if metadata else (len(existing_positions) * chunk_size + input_len + num_generated)
             total_chunks = (total_tokens + chunk_size - 1) // chunk_size
+
+            # ✅ DEBUG: Log after all values calculated
+            logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
             # Process each layer and split into 32-token chunks
             for layer_idx, (k, v) in enumerate(past_key_values):
