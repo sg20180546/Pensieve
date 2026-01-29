@@ -361,6 +361,13 @@ class Worker:
                             if info.get('session_id') == session_id:
                                 positions = info.get('positions', [])
                                 logger.debug(f"[DEBUG] session_id={session_id}: batch_info positions={positions} (chunk count={len(positions)})")
+                                # ✅ CRITICAL: Show actual chunk sizes in cache
+                                if positions:
+                                    max_chunk_id = max(positions)
+                                    for cache_dict in [input_cache.cache_manager.gpu_cache, input_cache.cache_manager.cpu_cache]:
+                                        for chunk in cache_dict.values():
+                                            if chunk.session_id == session_id and chunk.chunk_id == max_chunk_id:
+                                                logger.debug(f"[DEBUG] Last chunk ({max_chunk_id}): num_tokens={chunk.num_tokens} (expected ~32 or partial)")
                     if input_cache_len > 0:
                         # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
                         logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
