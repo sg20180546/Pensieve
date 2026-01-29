@@ -303,6 +303,66 @@ class PensieveServer:
             traceback.print_exc()
             return ""
 
+    def _vllm_generate_with_timing(self, input_ids, gen_kwargs):
+        """Wrapper around model.generate() that measures prefill and decode time separately.
+
+        Hooks into model.forward() to distinguish:
+        - Prefill: forward pass with past_key_values=None (input sequence)
+        - Decode: forward pass with past_key_values!=None (generated tokens)
+
+        Args:
+            input_ids: Input token IDs
+            gen_kwargs: Arguments for model.generate()
+
+        Returns:
+            Tuple of (outputs, prefill_time, decode_time)
+        """
+        from functools import wraps
+
+        timing_data = {
+            'prefill_time': 0.0,
+            'decode_time': 0.0,
+        }
+
+        # Save original forward
+        original_forward = self.model.forward
+
+        @wraps(original_forward)
+        def timed_forward(*args, input_ids=None, past_key_values=None, attention_mask=None, **kwargs):
+            start = time.time()
+            # Call original forward
+            output = original_forward(
+                input_ids=input_ids,
+                past_key_values=past_key_values,
+                attention_mask=attention_mask,
+                *args,
+                **kwargs
+            )
+            elapsed = time.time() - start
+
+            # Classify as prefill or decode based on KV cache state
+            if past_key_values is None:
+                # Prefill: processing input sequence (no KV cache used)
+                timing_data['prefill_time'] += elapsed
+            else:
+                # Decode: processing single token (with KV cache)
+                timing_data['decode_time'] += elapsed
+
+            return output
+
+        try:
+            # Hook the forward method
+            self.model.forward = timed_forward
+
+            # Call generate (will trigger our hooked forward)
+            outputs = self.model.generate(input_ids, **gen_kwargs)
+
+        finally:
+            # Restore original forward
+            self.model.forward = original_forward
+
+        return outputs, timing_data['prefill_time'], timing_data['decode_time']
+
     def _process_vllm_baseline(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
         """Process request using vLLM baseline (stateless).
 
@@ -320,7 +380,6 @@ class PensieveServer:
             Generated text
         """
         request_id = f"{session_id}_{self.total_requests}"
-        start_time = time.time()
 
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = []
@@ -374,10 +433,12 @@ class PensieveServer:
                 
                 
                 
-            outputs = self.model.generate(input_ids, **gen_kwargs)
+            # Use helper to measure prefill and decode time separately
+            outputs, prefill_time, decode_time = self._vllm_generate_with_timing(input_ids, gen_kwargs)
 
-        elapsed = time.time() - start_time
-        self.total_prefill_time += elapsed  # vLLM counts everything as prefill cost
+        # Accumulate measured prefill and decode times
+        self.total_prefill_time += prefill_time
+        self.total_generation_time += decode_time
 
         # Decode output
         generated_ids = outputs.sequences[0][input_ids.shape[1]:]
@@ -656,7 +717,7 @@ Active Sessions: {len(self.active_sessions)}
                     # print("@@@@@. sj")
                     # ✅ Accumulate prefill and generation time separately
                     self.total_prefill_time += batch_result.prefill_time
-                    print( self.total_prefill_time)
+                    # print(self.total_prefill_time)
                     self.total_generation_time += batch_result.generation_time
 
                     for req in requests:
