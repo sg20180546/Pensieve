@@ -220,8 +220,27 @@ class PensieveCache(Cache):
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
             self._write_debug_log(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
-            keys = torch.cat(all_keys, dim=1)  # Concatenate along sequence dimension
-            values = torch.cat(all_values, dim=1)
+
+            # ✅ CRITICAL: Detect actual tensor shape to concatenate at correct dimension
+            # Gemma-2 uses [batch, heads, seq, head_dim]
+            # Standard HF uses [batch, seq, heads, head_dim]
+            sample_key = all_keys[0]
+            if sample_key.dim() == 4:
+                # 4D tensor - determine which dimension is sequence
+                # For Gemma: [batch, heads, seq, head_dim] → concat at dim=2
+                # For Standard: [batch, seq, heads, head_dim] → concat at dim=1
+                # Heuristic: if dim[1] is small (num_heads typically 8-32), then dim=2 is seq
+                if sample_key.shape[1] < 256:  # Likely heads dimension (usually 8-32)
+                    seq_dim = 2  # Gemma format: [batch, heads, seq, head_dim]
+                else:
+                    seq_dim = 1  # Standard format: [batch, seq, heads, head_dim]
+            else:
+                # Default to dim=1 for 2D or other cases
+                seq_dim = 1
+
+            self._write_debug_log(f"[CACHE_DEBUG] Detected tensor format: dim={sample_key.dim()}, shape={sample_key.shape}, concat_at_dim={seq_dim}\n")
+            keys = torch.cat(all_keys, dim=seq_dim)  # Concatenate along detected sequence dimension
+            values = torch.cat(all_values, dim=seq_dim)
             self._write_debug_log(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
         else:
             # No cached KV for this layer, return empty tensors
