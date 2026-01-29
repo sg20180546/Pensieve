@@ -315,12 +315,7 @@ class PensieveServer:
             return ""
 
     def _vllm_generate_with_timing(self, input_ids, gen_kwargs):
-        """Wrapper around model.generate() that measures prefill and decode time separately.
-
-        Hooks into model.forward() to distinguish:
-        - Prefill: forward pass with past_key_values=None (input sequence)
-        - First token decode: first forward pass with past_key_values!=None (first generated token)
-        - Remaining decode: subsequent forward passes (remaining generated tokens)
+        """Simple wrapper around model.generate() - timing removed for stability.
 
         Args:
             input_ids: Input token IDs
@@ -328,74 +323,13 @@ class PensieveServer:
 
         Returns:
             Tuple of (outputs, prefill_time, first_token_time, remaining_decode_time)
+            Note: Timing values are dummy (0.0) to maintain interface compatibility
         """
-        import types
+        # Simply call model.generate without timing hooks
+        outputs = self.model.generate(input_ids, **gen_kwargs)
 
-        timing_data = {
-            'prefill_time': 0.0,
-            'first_token_time': 0.0,
-            'decode_time': 0.0,
-        }
-
-        # Mutable counter to track decode calls
-        decode_call_count = [0]
-
-        # Save original forward
-        original_forward = self.model.forward
-        start = time.time()
-
-        def timed_forward(model_self, *args, **kwargs):
-            """Hooked forward method that measures timing."""
-            # Call original forward (already bound to model instance)
-            output = original_forward(*args, **kwargs)
-            # ✅ Synchronize GPU to ensure all computation is complete before measuring elapsed time
-            
-
-            # Check if KV cache was used (distinguish prefill vs decode)
-            # past_key_values will be in kwargs or args
-            past_key_values = kwargs.get('past_key_values', None)
-
-            # If not in kwargs, check positional args (usually position 2)
-            if past_key_values is None and len(args) > 2:
-                past_key_values = args[2]
-
-            # Classify as prefill or decode based on KV cache state
-            # if past_key_values is None:
-                
-                # Prefill: processing input sequence (no KV cache used)
-            # else:
-            if past_key_values is not None:
-                if decode_call_count[0] == 0:
-                    # torch.cuda.synchronize()
-                    elapsed = time.time() - start
-                    timing_data['prefill_time'] = elapsed
-                # Decode: processing single token (with KV cache)
-                decode_call_count[0] += 1
-
-                # First decode call = first token generation
-                if decode_call_count[0] == 1:
-                    # torch.cuda.synchronize()
-                    elapsed = time.time() - start
-                    timing_data['first_token_time'] = elapsed
-                # else:
-                    # Remaining tokens
-                    # timing_data['decode_time'] += elapsed
-
-            return output
-
-        try:
-            # Hook the forward method properly (binding self)
-            self.model.forward = types.MethodType(timed_forward, self.model)
-
-            # Call generate (will trigger our hooked forward)
-            outputs = self.model.generate(input_ids, **gen_kwargs)
-
-        finally:
-            # Restore original forward
-            self.model.forward = original_forward
-        timing_data['decode_time']=time.time()-start-timing_data['prefill_time']-timing_data['first_token_time'] 
-
-        return outputs, timing_data['prefill_time'], timing_data['first_token_time'], timing_data['decode_time']
+        # Return dummy timing values (to maintain interface compatibility)
+        return outputs, 0.0, 0.0, 0.0
 
     def _process_vllm_baseline(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
         """Process request using vLLM baseline (stateless).
