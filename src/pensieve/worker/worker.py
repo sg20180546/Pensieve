@@ -125,6 +125,121 @@ class Worker:
         else:
             return 1  # Standard format: [batch, seq, heads, head_dim]
 
+    def _inspect_cache_thoroughly(self, session_id: str, pensieve_cache) -> str:
+        """Thoroughly inspect and dump all cached KV chunks for a session.
+
+        Returns:
+            Detailed inspection report as string
+        """
+        report = []
+        report.append("\n" + "="*80)
+        report.append(f"[CACHE INSPECTION] Session: {session_id}")
+        report.append("="*80)
+
+        if pensieve_cache is None:
+            report.append("❌ pensieve_cache is None")
+            return "\n".join(report)
+
+        if pensieve_cache.is_empty():
+            report.append("⚠️  pensieve_cache is empty (no chunks stored)")
+            return "\n".join(report)
+
+        # 1. Get all chunks for this session from cache manager
+        try:
+            gpu_cache = pensieve_cache.cache_manager.gpu_cache
+            cpu_cache = pensieve_cache.cache_manager.cpu_cache
+
+            report.append(f"\n📊 Cache Storage Status:")
+            report.append(f"   GPU cache size: {len(gpu_cache)} chunks")
+            report.append(f"   CPU cache size: {len(cpu_cache)} chunks")
+
+            # 2. Find all chunks for this session
+            session_chunks_gpu = []
+            session_chunks_cpu = []
+
+            for key, chunk in gpu_cache.items():
+                if chunk.session_id == session_id:
+                    session_chunks_gpu.append(chunk)
+
+            for key, chunk in cpu_cache.items():
+                if chunk.session_id == session_id:
+                    session_chunks_cpu.append(chunk)
+
+            # Sort by chunk_id for readable output
+            session_chunks_gpu.sort(key=lambda c: c.chunk_id)
+            session_chunks_cpu.sort(key=lambda c: c.chunk_id)
+
+            report.append(f"\n🔍 Chunks for session '{session_id}':")
+            report.append(f"   GPU: {len(session_chunks_gpu)} chunks")
+            report.append(f"   CPU: {len(session_chunks_cpu)} chunks")
+            report.append(f"   Total: {len(session_chunks_gpu) + len(session_chunks_cpu)} chunks")
+
+            # 3. Dump GPU chunks details
+            if session_chunks_gpu:
+                report.append(f"\n📍 GPU Chunks (from newest to oldest):")
+                total_gpu_tokens = 0
+                for chunk in sorted(session_chunks_gpu, key=lambda c: -c.chunk_id):
+                    num_tokens = chunk.num_tokens if hasattr(chunk, 'num_tokens') else self._get_seq_len_from_kv(chunk.key_tensor)
+                    total_gpu_tokens += num_tokens
+                    report.append(
+                        f"   chunk_id={chunk.chunk_id:3d} | "
+                        f"layer={chunk.layer_idx:2d} | "
+                        f"tokens={num_tokens:3d} | "
+                        f"shape={tuple(chunk.key_tensor.shape)} | "
+                        f"dtype={chunk.key_tensor.dtype}"
+                    )
+                report.append(f"   └─ Total GPU tokens: {total_gpu_tokens}")
+
+            # 4. Dump CPU chunks details
+            if session_chunks_cpu:
+                report.append(f"\n📍 CPU Chunks (from newest to oldest):")
+                total_cpu_tokens = 0
+                for chunk in sorted(session_chunks_cpu, key=lambda c: -c.chunk_id):
+                    num_tokens = chunk.num_tokens if hasattr(chunk, 'num_tokens') else self._get_seq_len_from_kv(chunk.key_tensor)
+                    total_cpu_tokens += num_tokens
+                    report.append(
+                        f"   chunk_id={chunk.chunk_id:3d} | "
+                        f"layer={chunk.layer_idx:2d} | "
+                        f"tokens={num_tokens:3d} | "
+                        f"shape={tuple(chunk.key_tensor.shape)} | "
+                        f"dtype={chunk.key_tensor.dtype}"
+                    )
+                report.append(f"   └─ Total CPU tokens: {total_cpu_tokens}")
+
+            # 5. Calculate total tokens and verify consistency
+            all_chunks = session_chunks_gpu + session_chunks_cpu
+            if all_chunks:
+                max_chunk_id = max(c.chunk_id for c in all_chunks)
+                expected_total_tokens = (max_chunk_id + 1) * 32  # Rough estimate
+                report.append(f"\n📈 Cache Statistics:")
+                report.append(f"   Max chunk_id: {max_chunk_id}")
+                report.append(f"   Expected ~total tokens: {expected_total_tokens}")
+
+                # Check for layer coverage
+                layers_in_cache = set()
+                for chunk in all_chunks:
+                    layers_in_cache.add(chunk.layer_idx)
+                report.append(f"   Layers covered: {sorted(layers_in_cache)}")
+                report.append(f"   Number of layers: {len(layers_in_cache)}")
+
+            # 6. Check session metadata
+            metadata = pensieve_cache.cache_manager.get_session_metadata(session_id)
+            if metadata:
+                report.append(f"\n📋 Session Metadata:")
+                report.append(f"   Total tokens stored: {metadata.total_tokens}")
+                report.append(f"   Last chunk size: {metadata.last_chunk_size}")
+                report.append(f"   Last access: {metadata.last_access_time}")
+            else:
+                report.append(f"\n⚠️  No metadata for session '{session_id}'")
+
+        except Exception as e:
+            report.append(f"❌ Error during inspection: {e}")
+            import traceback
+            report.append(traceback.format_exc())
+
+        report.append("="*80 + "\n")
+        return "\n".join(report)
+
     def execute_batch(
         self,
         batch: Batch,
@@ -322,6 +437,12 @@ class Worker:
             except Exception as e:
                 logger.warning(f"Failed to get session cache for {session_id}: {e}")
                 session_cache = None
+
+            # ✅ CACHE INSPECTION: Thoroughly examine cached chunks before generation
+            if session_cache is not None and not session_cache.is_empty():
+                inspection_report = self._inspect_cache_thoroughly(session_id, session_cache)
+                print(inspection_report)  # Print to console for immediate visibility
+                logger.debug(inspection_report)
 
             # Generation loop for this session only
             session_past_kv = None
