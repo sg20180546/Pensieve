@@ -75,10 +75,10 @@ class PensieveCache(Cache):
 
         # Debug: Print cache state on first call (for visibility)
         if layer_idx == 0:
-            print(f"\n[CACHE_DEBUG] __getitem__(layer_idx=0) START")
-            print(f"[CACHE_DEBUG] batch_info: {self.batch_info}")
+            print(f"\n[CACHE_DEBUG] __getitem__(layer_idx=0) START", flush=True)
+            print(f"[CACHE_DEBUG] batch_info: {self.batch_info}", flush=True)
             batch_positions = [info.get('positions', []) for info in self.batch_info.values()]
-            print(f"[CACHE_DEBUG] batch_info.positions: {batch_positions}")
+            print(f"[CACHE_DEBUG] batch_info.positions: {batch_positions}", flush=True)
 
             # List all chunks in cache_manager
             all_chunks = {}
@@ -86,10 +86,10 @@ class PensieveCache(Cache):
                 for key, chunk in cache_dict.items():
                     if key not in all_chunks:
                         all_chunks[key] = chunk
-            print(f"[CACHE_DEBUG] Total chunks in system: {len(all_chunks)}")
-            print(f"[CACHE_DEBUG] Chunks by (session_id, chunk_id, layer_idx):")
+            print(f"[CACHE_DEBUG] Total chunks in system: {len(all_chunks)}", flush=True)
+            print(f"[CACHE_DEBUG] Chunks by (session_id, chunk_id, layer_idx):", flush=True)
             for c in all_chunks.values():
-                print(f"[CACHE_DEBUG]   ({c.session_id}, {c.chunk_id}, {c.layer_idx}) - kv_shape=({c.key_tensor.shape if c.key_tensor is not None else 'None'}, {c.value_tensor.shape if c.value_tensor is not None else 'None'})")
+                print(f"[CACHE_DEBUG]   ({c.session_id}, {c.chunk_id}, {c.layer_idx}) - kv_shape=({c.key_tensor.shape if c.key_tensor is not None else 'None'}, {c.value_tensor.shape if c.value_tensor is not None else 'None'})", flush=True)
 
         # Gather KV from all requests in batch for this specific layer
         # Chunks are ordered by (session_id, chunk_id, layer_idx)
@@ -101,7 +101,7 @@ class PensieveCache(Cache):
             positions = request_info.get('positions', [])  # chunk_ids
 
             if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Primary path: request_id={request_id}, session_id={session_id}, positions={positions}")
+                print(f"[CACHE_DEBUG] Primary path: request_id={request_id}, session_id={session_id}, positions={positions}", flush=True)
 
             # Gather chunks for this layer at all positions in order
             for position in sorted(positions):
@@ -116,21 +116,21 @@ class PensieveCache(Cache):
                             all_keys.append(chunk.key_tensor)
                             all_values.append(chunk.value_tensor)
                             if layer_idx == 0:
-                                print(f"[CACHE_DEBUG] Found in primary path: chunk({session_id}, {position}, {layer_idx})")
+                                print(f"[CACHE_DEBUG] Found in primary path: chunk({session_id}, {position}, {layer_idx})", flush=True)
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
         # This handles cases where chunk_keys wasn't populated in Request object
         if not all_keys:
             if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Primary path found 0 chunks, triggering fallback scan...")
+                print(f"[CACHE_DEBUG] Primary path found 0 chunks, triggering fallback scan...", flush=True)
 
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
             if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Fallback: Looking for session_ids={session_ids}, layer_idx={layer_idx}")
-                print(f"[CACHE_DEBUG] Available in cache: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)} chunks")
+                print(f"[CACHE_DEBUG] Fallback: Looking for session_ids={session_ids}, layer_idx={layer_idx}", flush=True)
+                print(f"[CACHE_DEBUG] Available in cache: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)} chunks", flush=True)
 
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
@@ -140,7 +140,7 @@ class PensieveCache(Cache):
                         key = (chunk.session_id, chunk.chunk_id)
                         found_chunks[key] = chunk
                         if layer_idx == 0:
-                            print(f"[CACHE_DEBUG] Found chunk in fallback: {key}")
+                            print(f"[CACHE_DEBUG] Found chunk in fallback: {key}", flush=True)
 
             # Add chunks in order of chunk_id (grouped by session_id)
             for session_id in sorted(session_ids):
@@ -152,7 +152,7 @@ class PensieveCache(Cache):
                     all_values.append(chunk.value_tensor)
 
             if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}")
+                print(f"[CACHE_DEBUG] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}", flush=True)
 
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
