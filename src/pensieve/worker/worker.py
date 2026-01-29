@@ -348,7 +348,7 @@ class Worker:
                         # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
                         logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
                 # print(input_cache.len())/
-                print(input_cache.shape)
+                # print(input_cache.shape)
                 print(input_cache)
                 
                 # Forward pass - with session-specific cache
