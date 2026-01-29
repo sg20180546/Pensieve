@@ -310,32 +310,50 @@ class Worker:
                 if step_attention_mask is not None:
                     step_attention_mask = step_attention_mask.to(model_device)
 
+                # ✅ DEBUG: KV cache accumulation tracking
+                # Check input KV cache (what we're passing to the model)
+                input_cache = session_cache if step == 0 else session_past_kv
+                if input_cache is not None and len(input_cache) > 0:
+                    input_cache_len = input_cache[0][0].shape[2]  # sequence_length dimension
+                else:
+                    input_cache_len = 0
+
+                input_seq_len = step_input_ids.shape[1]  # Current input token count
+
                 # Forward pass - with session-specific cache
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
-                    past_key_values=session_cache if step == 0 else session_past_kv,
+                    past_key_values=input_cache,
                     use_cache=True,
                     return_dict=True,
                 )
-                if session_cache is not None:
-                    # 0번째 레이어의 0번째(key) 텐서의 2번째 차원이 sequence_length입니다.
-                    cache_seq_len = session_cache[0][0].shape[2]
+
+                # Check output KV cache (what the model produced)
+                if outputs.past_key_values is not None and len(outputs.past_key_values) > 0:
+                    output_cache_len = outputs.past_key_values[0][0].shape[2]
                 else:
-                    cache_seq_len = 0
+                    output_cache_len = 0
 
-                # 2. 이번에 새로 넣을 input_ids의 길이
-                input_seq_len = step_input_ids.shape[1]
+                # Expected: input_cache_len + input_seq_len = output_cache_len
+                expected_len = input_cache_len + input_seq_len
 
-                print(f"--- Debug Step: {step} ---")
-                print(f"Cache Length: {cache_seq_len}")
-                print(f"Input Token Length: {input_seq_len}")
-                print(f"Next Expected Position: {cache_seq_len + input_seq_len}")
+                # ✅ DEBUG OUTPUT: Track KV cache growth per step
+                logger.debug(f"[KV Cache Tracking] Step {step}, Session {session_id}")
+                logger.debug(f"  Input cache length: {input_cache_len}")
+                logger.debug(f"  Input token count: {input_seq_len}")
+                logger.debug(f"  Expected output length: {expected_len}")
+                logger.debug(f"  Actual output length: {output_cache_len}")
 
-                # 만약 캐시가 있는데 input_ids가 1보다 크다면, 
-                # 혹시 이전 토큰들을 중복해서 넣고 있는지 의심해봐야 합니다.
-                if cache_seq_len > 0 and input_seq_len > 1:
-                    print("⚠️ Warning: 캐시가 존재하는데 입력 토큰이 여러 개입니다. 중복 계산 중일 수 있습니다!")
+                # ✅ CORRECTNESS CHECK: Ensure no duplication
+                if output_cache_len != expected_len:
+                    logger.error(f"❌ KV CACHE MISMATCH! Expected {expected_len}, got {output_cache_len}")
+                    logger.error(f"   This indicates cache duplication or incorrect accumulation!")
+
+                # ✅ WARNING: If cache exists but input_seq_len > 1, possible duplication
+                if input_cache_len > 0 and input_seq_len > 1:
+                    logger.warning(f"⚠️ Cache exists ({input_cache_len}), but input has {input_seq_len} tokens. Possible duplication?")
+
                 # Extract outputs
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
