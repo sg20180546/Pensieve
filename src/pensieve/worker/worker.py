@@ -369,9 +369,9 @@ class Worker:
                 # ✅ DEBUG OUTPUT: Track KV cache growth (only when cache exists - multi-turn scenario)
                 # Skip: Step 0 (prefill) and first turn of any session (input_cache_len = 0)
                 # Log: Step 1+ where cache is being reused (input_cache_len > 0)
-                if _cache_debug_enabled and step > 0 and input_cache_len > 0:
-                    cache_reuse_pct = 100 * input_cache_len / expected_len
-                    logger.debug(f"[Step {step}] Session {session_id}: {input_cache_len}↓ cached + {input_seq_len} new → {output_cache_len} total ({cache_reuse_pct:.1f}% reuse)")
+                # if _cache_debug_enabled and step > 0 and input_cache_len > 0:
+                #     cache_reuse_pct = 100 * input_cache_len / expected_len
+                #     logger.debug(f"[Step {step}] Session {session_id}: {input_cache_len}↓ cached + {input_seq_len} new → {output_cache_len} total ({cache_reuse_pct:.1f}% reuse)")
 
                 # ✅ CORRECTNESS CHECK: Ensure no duplication
                 if output_cache_len != expected_len:
