@@ -273,6 +273,7 @@ def concurrent_client_worker(
     conversations: list,
     request_interval: float,
     results_queue: Queue,
+    max_new_tokens: int = 256,
 ) -> None:
     """Simulate a single concurrent client making requests (blocking version).
 
@@ -297,7 +298,7 @@ def concurrent_client_worker(
             response = server.process_request(
                 session_id,
                 user_input,
-                max_new_tokens=32,
+                max_new_tokens=max_new_tokens,
             )
             turn_end = time.time()
             tail_latency = turn_end - turn_start
@@ -322,6 +323,7 @@ def concurrent_client_worker_async(
     conversations: list,
     request_interval: float,
     results_queue: Queue,
+    max_new_tokens: int = 256,
 ) -> None:
     """Simulate a single concurrent client using async request submission (for Pensieve with batching).
 
@@ -355,7 +357,7 @@ def concurrent_client_worker_async(
         request_id = server.submit_request_async(
             session_id,
             user_input,
-            max_new_tokens=32,
+            max_new_tokens=max_new_tokens,
         )
 
         submit_time = time.time() - submit_start
@@ -391,6 +393,7 @@ def concurrent_client_worker_vllm_async(
     conversations: list,
     request_interval: float,
     results_queue: Queue,
+    max_new_tokens: int = 256,
 ) -> None:
     """Simulate a single concurrent client for vLLM using async submission (no batching).
 
@@ -424,7 +427,7 @@ def concurrent_client_worker_vllm_async(
             request_id = server.submit_request_async(
                 session_id,
                 user_input,
-                max_new_tokens=32,
+                max_new_tokens=max_new_tokens,
             )
 
             # Retrieve result (blocking, but immediate since no batching)
@@ -578,6 +581,7 @@ def run_concurrent_comparison(args):
                 conversations,
                 client_intervals[client_id],  # Use client-specific interval
                 pensieve_results_queue,
+                args.max_new_tokens,  # Pass max_new_tokens from CLI args
             ),
         )
         thread.start()
@@ -687,6 +691,7 @@ def run_concurrent_comparison(args):
                 conversations,
                 client_intervals[client_id],  # Use same client-specific interval
                 vllm_results_queue,
+                args.max_new_tokens,  # Pass max_new_tokens from CLI args
             ),
         )
         thread.start()

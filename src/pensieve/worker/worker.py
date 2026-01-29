@@ -137,12 +137,14 @@ class Worker:
             # 5. Run custom generation loop with KV cache integration
             with torch.no_grad():
                 try:
+                    # Extract max_new_tokens from first request (all requests in batch should have same value)
+                    max_new_tokens = batch.requests[0].max_new_tokens if batch.requests else 32
                     outputs = self._custom_generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         pensieve_cache=pensieve_cache,
                         batch=batch,
-                        max_new_tokens=32,
+                        max_new_tokens=max_new_tokens,
                     )
                 except Exception as e:
                     print(f"Error during custom generation: {e}")
