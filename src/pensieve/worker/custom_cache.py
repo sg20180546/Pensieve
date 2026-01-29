@@ -119,7 +119,11 @@ class PensieveCache(Cache):
         Returns:
             True if no cached chunks, False if has cached chunks
         """
-        return self._seq_length == 0
+        # Check actual cache manager, not just current forward pass state
+        # This ensures we detect cache from previous turns correctly
+        has_gpu_chunks = len(self.cache_manager.gpu_cache) > 0
+        has_cpu_chunks = len(self.cache_manager.cpu_cache) > 0
+        return not (has_gpu_chunks or has_cpu_chunks)
 
     def __len__(self) -> int:
         """Return number of layers (required by Cache interface)."""
