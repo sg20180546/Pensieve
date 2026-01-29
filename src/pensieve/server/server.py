@@ -452,19 +452,18 @@ class PensieveServer:
                 "output_attentions": False,
             }
 
-            # Only apply custom sampling for small base models to avoid repetition
-            # Instruct models are pre-configured for good generation
+            # ✅ GREEDY DECODING (deterministic)
+            # Paper requirement: "Output matches a stateless baseline (Pensieve)"
+            # Using greedy (do_sample=False) ensures deterministic output
+            # Same logits = same tokens for correctness verification
+            # gen_kwargs stays with default greedy behavior (do_sample=False implicit)
 
-            if "instruct" not in self.model_name.lower():
-                # Small base models need sampling (e.g., OPT-125m)
-                gen_kwargs.update({
-                    "do_sample": True,
-                    "top_p": 0.9,
-                    "temperature": 0.7,
-                })
-                # print("RANDOM MODE")
-            # else:
-                # print("INSTRUCT MODE")
+            # Disable sampling for correctness verification
+            gen_kwargs.update({
+                "do_sample": False,
+            })
+            # Note: Sampling can be re-enabled by setting do_sample=True + temperature/top_p
+            # but for now we use greedy to match Pensieve's deterministic output
                 
                 
                 

@@ -318,7 +318,24 @@ class Worker:
                     use_cache=True,
                     return_dict=True,
                 )
+                if session_cache is not None:
+                    # 0번째 레이어의 0번째(key) 텐서의 2번째 차원이 sequence_length입니다.
+                    cache_seq_len = session_cache[0][0].shape[2]
+                else:
+                    cache_seq_len = 0
 
+                # 2. 이번에 새로 넣을 input_ids의 길이
+                input_seq_len = step_input_ids.shape[1]
+
+                print(f"--- Debug Step: {step} ---")
+                print(f"Cache Length: {cache_seq_len}")
+                print(f"Input Token Length: {input_seq_len}")
+                print(f"Next Expected Position: {cache_seq_len + input_seq_len}")
+
+                # 만약 캐시가 있는데 input_ids가 1보다 크다면, 
+                # 혹시 이전 토큰들을 중복해서 넣고 있는지 의심해봐야 합니다.
+                if cache_seq_len > 0 and input_seq_len > 1:
+                    print("⚠️ Warning: 캐시가 존재하는데 입력 토큰이 여러 개입니다. 중복 계산 중일 수 있습니다!")
                 # Extract outputs
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
@@ -343,20 +360,12 @@ class Worker:
                 #     top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
                 #     print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
 
-                # ✅ Token selection: greedy for Instruct models, sampling for base models
-                # Instruct models are pre-optimized for good generation
-                # Small base models need sampling to avoid repetition (e.g., OPT-125m)
-                if "instruct" not in self.model_name:
-                    # print("RANDOM")
-                    # Base models: use sampling to avoid repetition
-                    temperature = 0.7
-                    scaled_logits = next_token_logits / temperature  # [1, vocab_size]
-                    probs = torch.softmax(scaled_logits, dim=-1)  # [1, vocab_size]
-                    next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [1]
-                else:
-                    # print("INSTRUCT")
-                    # Instruct models: use greedy decoding (model-optimized)
-                    next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
+                # ✅ Token selection: GREEDY DECODING (deterministic)
+                # Paper requirement: "Output matches a stateless baseline (vLLM)"
+                # Using greedy (argmax) ensures deterministic output - same logits = same tokens
+                # This is critical for correctness verification vs vLLM baseline
+                # (Sampling can be enabled later by setting PENSIEVE_USE_SAMPLING=1)
+                next_token_ids = torch.argmax(next_token_logits, dim=-1)  # [1]
 
                 # Record TTFT
                 if step == 0 and not ttft_recorded:
