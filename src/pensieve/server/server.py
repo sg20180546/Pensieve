@@ -106,7 +106,8 @@ class PensieveServer:
         self.total_generation_time = 0.0
         self.total_requests = 0
         self.total_tokens_generated = 0
-        self.last_ttft_per_request = {}  # TTFT for last batch {request_id: ttft in seconds}
+        self.all_ttfts = []  # ✅ All TTFT measurements [ttft1, ttft2, ...] for aggregation
+        self.last_ttft_per_request = {}  # TTFT for all requests {request_id: ttft in seconds}
 
     @property
     def model(self):
@@ -255,6 +256,12 @@ class PensieveServer:
             with self.request_lock:
                 self.total_prefill_time += batch_result.prefill_time
                 self.total_generation_time += batch_result.generation_time
+
+                # Store TTFT from batch result
+                if batch_result.ttft_per_request:
+                    self.last_ttft_per_request.update(batch_result.ttft_per_request)
+                    # ✅ Accumulate all TTFTs for aggregation
+                    self.all_ttfts.extend(batch_result.ttft_per_request.values())
 
             # Extract response from batch result
             if request_id in batch_result.request_results:
@@ -455,13 +462,15 @@ class PensieveServer:
 
         # Calculate TTFT (Time to First Token) = prefill + first token generation
         ttft = prefill_time + first_token_time
-        print("vllm internal ttft",ttft)
+
         # Accumulate measured times (thread-safe with lock)
         with self.request_lock:
             self.total_prefill_time += prefill_time
             self.total_generation_time += remaining_decode_time + first_token_time  # Total generation (first + remaining)
             # Store TTFT for this request
             self.last_ttft_per_request[request_id] = ttft
+            self.all_ttfts.append(ttft)  # ✅ Accumulate all TTFTs for aggregation
+            self.last_ttft = ttft  # Track latest TTFT for client workers
 
         # Decode output
         generated_ids = outputs.sequences[0][input_ids.shape[1]:]
@@ -745,6 +754,12 @@ Active Sessions: {len(self.active_sessions)}
                     # print(self.total_prefill_time)
                     self.total_generation_time += batch_result.generation_time
 
+                    # Store TTFT from batch result
+                    if batch_result.ttft_per_request:
+                        self.last_ttft_per_request.update(batch_result.ttft_per_request)
+                        # ✅ Accumulate all TTFTs for aggregation
+                        self.all_ttfts.extend(batch_result.ttft_per_request.values())
+
                     for req in requests:
                         request_id = req.request_id
                         session_id = req.session_id
@@ -820,6 +835,8 @@ Active Sessions: {len(self.active_sessions)}
         self.total_generation_time = 0.0
         self.total_requests = 0
         self.total_tokens_generated = 0
+        self.all_ttfts.clear()
+        self.last_ttft_per_request.clear()
 
 
 def create_server(

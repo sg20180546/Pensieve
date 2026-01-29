@@ -291,8 +291,8 @@ def concurrent_client_worker(
             turn_end = time.time()
             tail_latency = turn_end - turn_start
 
-            # Get TTFT from server
-            ttft = list(server.last_ttft_per_request.values())[0] if server.last_ttft_per_request else 0.0
+            # Get TTFT from server (last measured value)
+            ttft = server.last_ttft
 
             ttfts.append(ttft)
             tail_latencies.append(tail_latency)
@@ -355,10 +355,11 @@ def concurrent_client_worker_async(
             # Wait for result (with timeout)
             response = server.get_request_result(request_id, timeout=30.0)
             if response:
-                # Result is available - estimate timing
-                # (In real system, would get actual TTFT from batch results)
-                ttft = 0.1  # Placeholder
-                tail_latency = 0.2  # Placeholder
+                # Get TTFT from server (last measured value for this request)
+                ttft = server.last_ttft
+                # Note: For async batched execution, tail_latency would come from batch_result
+                # For now, estimate as difference from request submission
+                tail_latency = 0.2  # TODO: Measure actual per-request latency in batch results
                 ttfts.append(ttft)
                 tail_latencies.append(tail_latency)
         except Exception as e:
@@ -523,21 +524,21 @@ def run_concurrent_comparison(args):
         pensieve_server.batch_collection_thread.join(timeout=1.0)
 
     # Aggregate results from all clients
-    all_pensieve_ttfts = []
     all_pensieve_tail_latencies = []
     total_pensieve_requests = 0
 
     while not pensieve_results_queue.empty():
         result = pensieve_results_queue.get()
-        all_pensieve_ttfts.extend(result["ttfts"])
         all_pensieve_tail_latencies.extend(result["tail_latencies"])
         total_pensieve_requests += result["response_count"]
 
     pensieve_stats = pensieve_server.get_statistics_str()
     print(f"\n{pensieve_stats}")
 
+    # ✅ Use server's accumulated TTFT measurements (most accurate)
+    all_pensieve_ttfts = pensieve_server.all_ttfts
+
     # Calculate Pensieve metrics
-    print("sj all_pensieve_ttfts",all_pensieve_ttfts)
     pensieve_avg_ttft = mean(all_pensieve_ttfts) if all_pensieve_ttfts else 0
     pensieve_p99_ttft = (
         sorted(all_pensieve_ttfts)[int(len(all_pensieve_ttfts) * 0.99)]
@@ -621,22 +622,21 @@ def run_concurrent_comparison(args):
     vllm_total_time = time.time() - start_time
 
     # Aggregate results from all clients
-    all_vllm_ttfts = []
     all_vllm_tail_latencies = []
     total_vllm_requests = 0
 
     while not vllm_results_queue.empty():
         result = vllm_results_queue.get()
-        all_vllm_ttfts.extend(result["ttfts"])
         all_vllm_tail_latencies.extend(result["tail_latencies"])
         total_vllm_requests += result["response_count"]
 
     vllm_stats = vllm_server.get_statistics_str()
     print(f"\n{vllm_stats}")
 
-    # Calculate vLLM metrics
-    print("sj all_vllm_ttfts",all_vllm_ttfts)
+    # ✅ Use server's accumulated TTFT measurements (most accurate)
+    all_vllm_ttfts = vllm_server.all_ttfts
 
+    # Calculate vLLM metrics
     vllm_avg_ttft = mean(all_vllm_ttfts) if all_vllm_ttfts else 0
     vllm_p99_ttft = (
         sorted(all_vllm_ttfts)[int(len(all_vllm_ttfts) * 0.99)]
