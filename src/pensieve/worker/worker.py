@@ -274,8 +274,8 @@ class Worker:
                 else:
                     # Cache has chunks, pass full PensieveCache
                     # (it will filter to only this session's chunks)
-                    # session_cache = pensieve_cache
-                    session_cache=None
+                    session_cache = pensieve_cache
+                    # session_cache=None
                     if _cache_debug_enabled:
                         logger.debug(f"[DEBUG] {session_id}: pensieve_cache has chunks → session_cache=PensieveCache")
             except Exception as e:
@@ -290,7 +290,15 @@ class Worker:
                 # Prepare input for this step
                 if step == 0:
                     step_input_ids = req_input_ids
-                    step_attention_mask = req_attention_mask
+                    # ✅ CRITICAL FIX: When reusing cache from previous turn, attention_mask must cover ALL tokens
+                    # Turn 1: session_cache=None, mask covers input only (correct)
+                    # Turn 2+: session_cache has cached KV, mask must be None (model auto-extends)
+                    if session_cache is not None and not session_cache.is_empty():
+                        # Turn 2+: Cache exists, let model handle attention for cached + new tokens
+                        step_attention_mask = None
+                    else:
+                        # Turn 1: No cache, use provided mask
+                        step_attention_mask = req_attention_mask
                 else:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
                     # CRITICAL: When using past_key_values, don't constrain attention_mask
