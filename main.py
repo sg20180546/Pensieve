@@ -578,6 +578,12 @@ def run_concurrent_comparison(args):
 
     print(f"✓ vLLM server initialized (GPU memory allocated)")
 
+    # ✅ Pre-load model before concurrent access (avoid meta tensor race condition)
+    print("Pre-loading vLLM model before concurrent access...")
+    _ = vllm_server.model      # Trigger model loading via property
+    _ = vllm_server.tokenizer  # Trigger tokenizer loading
+    print("✓ vLLM model pre-loaded successfully")
+
     # Launch concurrent client threads with SAME access pattern
     vllm_results_queue = Queue()
     vllm_threads = []
