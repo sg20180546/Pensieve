@@ -136,7 +136,13 @@ def main():
         default=0.5,
         help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
     )
-
+    parser.add_argument(
+        "--max_turns",
+        type=int,
+        default=5,
+        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
+    )
+        
     args = parser.parse_args()
 
     # Print configuration

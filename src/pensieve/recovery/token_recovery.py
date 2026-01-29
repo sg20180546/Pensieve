@@ -237,6 +237,12 @@ class TokenRecoveryManager:
                 # 🔑 KEY STEP 4: Store recovered KV for all layers
                 past_kv = outputs.past_key_values
                 if past_kv:
+                    # ✅ DEBUG: Log dtype from model output
+                    if past_kv and len(past_kv) > 0:
+                        k, v = past_kv[0]
+                        if k is not None:
+                            print(f"      [dtype-check] Model output KV: key={k.dtype}, value={v.dtype}")
+
                     self._store_recovered_chunks(
                         session_id=session_id,
                         chunk_id=dropped_chunk_id,
@@ -296,9 +302,13 @@ class TokenRecoveryManager:
                         print(f"      ⚠️  Chunk {chunk_key} not found")
                         continue
 
-                    # Move to device
+                    # Move to device (preserve original dtype)
                     key_tensor = chunk.key_tensor.to(self.device)
                     value_tensor = chunk.value_tensor.to(self.device)
+
+                    # ✅ DEBUG: Log dtype consistency
+                    if chunk_id == 0 and layer_idx == 0:
+                        print(f"      [dtype-check] Loaded KV: key={key_tensor.dtype}, value={value_tensor.dtype}")
 
                     # Ensure shape: [batch=1, seq_len, num_heads, head_dim]
                     if key_tensor.dim() == 3:
@@ -328,6 +338,11 @@ class TokenRecoveryManager:
                         collected_values[layer_idx],
                         dim=1,
                     )
+
+                    # ✅ DEBUG: Log dtype after concatenation
+                    if layer_idx == 0:
+                        print(f"      [dtype-check] Concatenated KV for recovery: key={concatenated_key.dtype}, value={concatenated_value.dtype}")
+
                     past_key_values.append((concatenated_key, concatenated_value))
                 except Exception as e:
                     print(f"      ❌ Error concatenating layer {layer_idx}: {e}")

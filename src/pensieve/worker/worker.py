@@ -321,6 +321,7 @@ class Worker:
                     first_k, first_v = session_past_kv[0]
                     if first_k is not None:
                         logger.debug(f"_custom_generate] After forward step {step}: first_k.shape={first_k.shape} (batch={first_k.shape[0]})")
+                        logger.debug(f"_custom_generate] dtype: first_k={first_k.dtype}, first_v={first_v.dtype}")
                         if first_k.shape[0] == 0:
                             logger.error(f"❌ ERROR: KV batch size is 0! Input was [1, {step_input_ids.shape[1]}]")
                             logger.error(f"   step_input_ids.shape={step_input_ids.shape}, logits.shape={logits.shape}")
@@ -746,6 +747,7 @@ class Worker:
                 # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
                 if layer_idx == 0:
                     logger.debug(f"_store_new_kv_chunks] After extraction: new_key.shape={new_key.shape}, new_value.shape={new_value.shape}")
+                    logger.debug(f"_store_new_kv_chunks] dtype: new_key={new_key.dtype}, new_value={new_value.dtype}")
                     if new_key.shape[0] == 0:
                         logger.error(f"❌ ERROR FOUND: new_key batch size is 0!")
                         logger.error(f"   k.shape={k.shape} (batch={k.shape[0]})")
@@ -785,12 +787,20 @@ class Worker:
                         )
 
                         # Update last chunk with merged KV
+                        merged_key_cpu = merged_key.detach().cpu()
+                        merged_value_cpu = merged_value.detach().cpu()
+
+                        # ✅ DEBUG: Log dtype when merging chunks
+                        if layer_idx == 0:
+                            logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_cpu={merged_key_cpu.dtype}, merged_value_cpu={merged_value_cpu.dtype}")
+                            logger.debug(f"  → last_chunk original: key={last_chunk.key_tensor.dtype}, value={last_chunk.value_tensor.dtype}")
+
                         updated_chunk = KVChunk(
                             session_id=session_id,
                             chunk_id=last_chunk_id,
                             layer_idx=layer_idx,
-                            key_tensor=merged_key.detach().cpu(),
-                            value_tensor=merged_value.detach().cpu(),
+                            key_tensor=merged_key_cpu,
+                            value_tensor=merged_value_cpu,
                             context_length=last_chunk.context_length,
                             session_total_chunks=total_chunks,
                             num_layers=self.num_layers,
@@ -826,12 +836,19 @@ class Worker:
                     context_length = actual_context_before + last_chunk_size + fill_last + (chunk_idx * chunk_size)
 
                     # Create chunk for this layer
+                    chunk_key_cpu = chunk_key.detach().cpu()
+                    chunk_value_cpu = chunk_value.detach().cpu()
+
+                    # ✅ DEBUG: Log dtype when storing chunks
+                    if layer_idx == 0:
+                        logger.debug(f"_store_new_kv_chunks] Storing chunk: key_cpu={chunk_key_cpu.dtype}, value_cpu={chunk_value_cpu.dtype}")
+
                     chunk = KVChunk(
                         session_id=session_id,
                         chunk_id=chunk_id,
                         layer_idx=layer_idx,
-                        key_tensor=chunk_key.detach().cpu(),
-                        value_tensor=chunk_value.detach().cpu(),
+                        key_tensor=chunk_key_cpu,
+                        value_tensor=chunk_value_cpu,
                         context_length=context_length,
                         session_total_chunks=total_chunks,
                         num_layers=self.num_layers,
