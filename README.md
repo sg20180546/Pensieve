@@ -234,12 +234,12 @@ python main.py --interactive
 - [x] GPU ↔ CPU swapping
 
 ### Phase 4: Advanced Features (In Progress)
-- [ ] Dropped token recovery
-- [ ] Multi-token attention kernel
-- [ ] Unified batching (prefill + generation)
+- [x] Dropped token recovery
+- [x] Multi-token attention kernel
+- [x] Unified batching (prefill + generation)
 - [ ] Pipelined transfer
 
-### Phase 5: Evaluation (Future)
+### Phase 5: Evaluation (In Progress)
 - [ ] ShareGPT dataset
 - [ ] Performance benchmarking
 - [ ] Throughput vs latency plots
@@ -253,4 +253,5 @@ python main.py --interactive
 
 - This is an **educational prototype** demonstrating the paper's core concepts, not a production system
 - For maximum performance in production, use actual vLLM or TensorRT-LLM
+- As this project does not touch cuda level optimization, mesurement of TTFT or prefill/generation time separation is infeasible.
 - The codebase prioritizes clarity over performance
