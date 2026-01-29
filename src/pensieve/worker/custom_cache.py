@@ -70,10 +70,19 @@ class PensieveCache(Cache):
             - Shape: [batch_size, seq_len, num_heads, head_dim]
         """
         import sys
-        print(f"\n[CACHE_DEBUG] __getitem__ CALLED with layer_idx={layer_idx}", file=sys.stderr, flush=True)
+        import traceback
+
+        # CRITICAL: Ensure this prints FIRST
+        try:
+            print(f"\n========== [CACHE_DEBUG] __getitem__ START layer_idx={layer_idx} ==========", file=sys.stderr, flush=True)
+            sys.stderr.flush()
+        except Exception as e:
+            print(f"ERROR at line 73: {e}", file=sys.stderr, flush=True)
+            traceback.print_exc(file=sys.stderr)
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
+            print(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached", file=sys.stderr, flush=True)
             return self._layer_kv_cache[layer_idx]
 
         # Debug: Print cache state on first call (for visibility)
@@ -166,18 +175,23 @@ class PensieveCache(Cache):
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
+            print(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}", file=sys.stderr, flush=True)
             keys = torch.cat(all_keys, dim=1)  # Concatenate along sequence dimension
             values = torch.cat(all_values, dim=1)
+            print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
         else:
             # No cached KV for this layer, return empty tensors
             # Model will treat this as no past_key_values for this layer
+            print(f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors", file=sys.stderr, flush=True)
             keys = torch.empty(0, dtype=torch.float16)
             values = torch.empty(0, dtype=torch.float16)
+            print(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
         self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
 
+        print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
         return keys, values
 
     def is_empty(self) -> bool:
