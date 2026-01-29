@@ -585,6 +585,9 @@ class Worker:
                 generated_ids, skip_special_tokens=True
             )
 
+            # DEBUG: Token counting verification
+            logger.debug(f"[Pensieve DEBUG] req_id={req.request_id}, input_ids shape={req.input_ids.shape if hasattr(req.input_ids, 'shape') else len(req.input_ids)}, input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
+
             # Update request
             req.generated_tokens = generated_ids.tolist()
             req.finished = True
