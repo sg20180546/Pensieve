@@ -164,11 +164,9 @@ class PensieveCache(Cache):
                             if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
                                 all_keys.append(chunk.key_tensor)
                                 all_values.append(chunk.value_tensor)
-                                with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                                    f.write(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
+                                self._write_debug_log(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
                             else:
-                                with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                                    f.write(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
+                                self._write_debug_log(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
@@ -213,8 +211,7 @@ class PensieveCache(Cache):
                         all_keys.append(chunk.key_tensor)
                         all_values.append(chunk.value_tensor)
                     else:
-                        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                            f.write(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
+                        self._write_debug_log(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
 
             if layer_idx == 0:
                 print(f"[CACHE_DEBUG] Fallback found {len(all_keys)} KV pairs for layer {layer_idx}", flush=True)
@@ -222,31 +219,27 @@ class PensieveCache(Cache):
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
-            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                f.write(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
+            self._write_debug_log(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
             keys = torch.cat(all_keys, dim=1)  # Concatenate along sequence dimension
             values = torch.cat(all_values, dim=1)
-            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                f.write(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            self._write_debug_log(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
         else:
             # No cached KV for this layer, return empty tensors
             # Model will treat this as no past_key_values for this layer
-            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                f.write(f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors\n")
-                f.write(f"all_keys length: {len(all_keys)}\n")
-                f.write(f"all_values length: {len(all_values)}\n")
-                f.write(f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
+            msg = (f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors\n"
+                   f"all_keys length: {len(all_keys)}\n"
+                   f"all_values length: {len(all_values)}\n"
+                   f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
+            self._write_debug_log(msg)
             keys = torch.empty(0, dtype=torch.float16)
             values = torch.empty(0, dtype=torch.float16)
-            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-                f.write(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            self._write_debug_log(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
         self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
 
-        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
-            f.write(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
+        self._write_debug_log(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
     def is_empty(self) -> bool:
