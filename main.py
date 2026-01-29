@@ -552,6 +552,7 @@ def run_concurrent_comparison(args):
     pensieve_throughput = (
         total_pensieve_requests / pensieve_total_time if pensieve_total_time > 0 else 0
     )
+    print("total_pensieve_requests/pensieve_total_time",total_pensieve_requests,pensieve_total_time)
 
     # ============================================================================
     # CLEANUP: Explicit memory cleanup between runs
@@ -648,6 +649,7 @@ def run_concurrent_comparison(args):
     vllm_throughput = (
         total_vllm_requests / vllm_total_time if vllm_total_time > 0 else 0
     )
+    print("total_pensieve_requests/pensieve_total_time",total_vllm_requests,vllm_total_time)
 
     # ============================================================================
     # COMPARISON & ANALYSIS
