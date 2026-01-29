@@ -715,7 +715,7 @@ class Worker:
         if not past_key_values:
             return
 
-        chunk_size = 32
+        chunk_size = self.cache.CHUNK_SIZE
 
         # ✅ If target_session_id specified, find that request only
         target_reqs = []
@@ -775,7 +775,7 @@ class Worker:
 
             # Total tokens after this generation
             total_tokens = metadata.total_tokens + num_generated if metadata else (len(existing_positions) * chunk_size + input_len + num_generated)
-            total_chunks = (total_tokens + 31) // chunk_size
+            total_chunks = (total_tokens + chunk_size - 1) // chunk_size
 
             # Process each layer and split into 32-token chunks
             for layer_idx, (k, v) in enumerate(past_key_values):

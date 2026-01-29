@@ -388,7 +388,7 @@ class TokenRecoveryManager:
                     key_tensor=new_key.detach().cpu(),
                     value_tensor=new_value.detach().cpu(),
                     context_length=num_prev_tokens,  # Tokens before this chunk
-                    session_total_chunks=(num_prev_tokens + self.chunk_size + 31) // 32,
+                    session_total_chunks=(num_prev_tokens + 2 * self.chunk_size - 1) // self.chunk_size,
                     num_layers=num_layers,
                 )
 
