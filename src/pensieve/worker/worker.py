@@ -859,6 +859,10 @@ class Worker:
                 remaining_new = num_generated  # Will be recalculated below for Turn 1
                 next_chunk_id = last_chunk_id + 1 if last_chunk_id >= 0 else 0
 
+            # ✅ DEBUG: Track chunk allocation
+            logger.debug(f"[DEBUG _store_new_kv_chunks] session_id={session_id}, num_generated={num_generated}, fill_last={fill_last}, remaining_new={remaining_new}, last_chunk_id={last_chunk_id}, existing_positions={existing_positions}")
+            logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before if 'actual_context_before' not in locals() else 0}, total_tokens={total_tokens}, total_chunks={total_chunks}")
+
             # ✅ Calculate actual context_length considering metadata
             if metadata:
                 actual_context_before = metadata.total_tokens - last_chunk_size
@@ -910,10 +914,12 @@ class Worker:
                     # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
                     tokens_stored = new_key.shape[2]  # Actual tokens in extracted tensor
                     if layer_idx == 0:  # Only recalculate once per request
+                        logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
                         remaining_new = tokens_stored - fill_last
                         # Update total_tokens to reflect actual stored tokens
                         total_tokens = tokens_stored
                         total_chunks = (total_tokens + chunk_size - 1) // chunk_size
+                        logger.debug(f"[DEBUG TURN 1] Recalculated: remaining_new={remaining_new}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
                 # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
                 # if layer_idx == 0:
@@ -1010,9 +1016,9 @@ class Worker:
                     chunk_key_cpu = chunk_key.detach().cpu()
                     chunk_value_cpu = chunk_value.detach().cpu()
 
-                    # ✅ DEBUG: Log dtype when storing chunks
-                    # if layer_idx == 0:
-                    #     logger.debug(f"_store_new_kv_chunks] Storing chunk: key_cpu={chunk_key_cpu.dtype}, value_cpu={chunk_value_cpu.dtype}")
+                    # ✅ DEBUG: Log tensor shape when storing chunks
+                    if layer_idx == 0:
+                        logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_cpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
 
                     chunk = KVChunk(
                         session_id=session_id,
@@ -1024,6 +1030,10 @@ class Worker:
                         session_total_chunks=total_chunks,
                         num_layers=self.num_layers,
                     )
+
+                    # ✅ DEBUG: Verify num_tokens calculation
+                    if layer_idx == 0:
+                        logger.debug(f"[DEBUG CHUNK STORE] chunk.num_tokens={chunk.num_tokens} (should be {chunk_end - chunk_start})")
 
                     # Store in cache
                     try:

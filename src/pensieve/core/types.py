@@ -184,8 +184,27 @@ class KVChunk:
         """Number of tokens in this chunk (always 32, except possibly last)."""
         if self.key_tensor is None:
             return 0
-        # Shape: [1, seq_len, num_heads, head_dim]
-        return self.key_tensor.shape[1] if len(self.key_tensor.shape) > 1 else self.key_tensor.shape[0]
+
+        # ✅ FIX: Detect tensor format correctly
+        # Different models use different shapes:
+        # - Gemma-2: [batch, heads, seq, head_dim] → seq at dim=2
+        # - Standard HF: [batch, seq, heads, head_dim] → seq at dim=1
+
+        shape = self.key_tensor.shape
+        if len(shape) < 2:
+            return 0
+
+        if len(shape) == 4:
+            # 4D tensor: determine which dimension is sequence
+            # Heuristic: if dim[1] is small (num_heads 8-128), then dim=2 is seq
+            if shape[1] < 256:  # shape[1] is likely num_heads
+                seq_len = shape[2]  # Gemma format: [batch, heads, seq, head_dim]
+            else:
+                seq_len = shape[1]  # Standard format: [batch, seq, heads, head_dim]
+            return seq_len
+        else:
+            # For other shapes, default to dim[1] (e.g., 2D: [batch, seq] or [seq, heads])
+            return shape[1]
 
     @property
     def key(self) -> str:
