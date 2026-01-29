@@ -827,6 +827,13 @@ class Worker:
             input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
             num_generated = len(req.generated_tokens)
 
+            # ✅ DEBUG: Log actual input/generated counts
+            logger.debug(f"[DEBUG _store] session_id={session_id}: req.input_ids.shape={req.input_ids.shape}, len={input_len}")
+            logger.debug(f"[DEBUG _store] session_id={session_id}: req.generated_tokens len={num_generated}, expected_total={input_len + num_generated}")
+
+            # ✅ DEBUG: Will compare expected vs actual after we see model output
+            expected_total_tokens = input_len + num_generated
+
             # ✅ DEBUG: Check input/generated token counts (Scenario 3)
             # logger.debug(f"_store_new_kv_chunks] session_id={session_id}: input_len={input_len}, num_generated={num_generated}")
 
@@ -919,6 +926,13 @@ class Worker:
                         logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: input_len={input_len}, num_generated={num_generated}")
                         logger.debug(f"[DEBUG TURN 1] k.shape={k.shape}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}")
                         logger.debug(f"[DEBUG TURN 1] new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
+
+                        # ✅ CRITICAL: Compare expected vs actual token counts
+                        if tokens_stored != expected_total_tokens:
+                            logger.error(f"❌ TOKEN LOSS DETECTED! Expected {expected_total_tokens} tokens ({input_len} input + {num_generated} generated) but model output has {tokens_stored} tokens. LOSS: {expected_total_tokens - tokens_stored} token(s)")
+                        else:
+                            logger.debug(f"✅ Token count matches: {tokens_stored} tokens stored")
+
                         remaining_new = tokens_stored - fill_last
                         # Update total_tokens to reflect actual stored tokens
                         total_tokens = tokens_stored
