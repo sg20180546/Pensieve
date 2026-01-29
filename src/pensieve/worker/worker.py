@@ -680,11 +680,11 @@ class Worker:
             num_generated = len(req.generated_tokens)
 
             # ✅ DEBUG: Check input/generated token counts (Scenario 3)
-            logger.debug(f"_store_new_kv_chunks] session_id={session_id}: input_len={input_len}, num_generated={num_generated}")
+            # logger.debug(f"_store_new_kv_chunks] session_id={session_id}: input_len={input_len}, num_generated={num_generated}")
 
             if num_generated == 0:
                 # No new tokens generated
-                logger.debug(f"_store_new_kv_chunks] session_id={session_id}: No tokens generated, returning early")
+                # logger.debug(f"_store_new_kv_chunks] session_id={session_id}: No tokens generated, returning early")
                 return
 
             # Determine new chunk_ids based on existing chunks
@@ -727,13 +727,13 @@ class Worker:
 
                 # ✅ DEBUG: Print actual shapes to diagnose mismatch
                 if layer_idx == 0:
-                    logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
-                    logger.debug(f"num_generated={num_generated}, fill_last={fill_last}")
+                    # logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
+                    # logger.debug(f"num_generated={num_generated}, fill_last={fill_last}")
                     if fill_last > 0 and last_chunk_id >= 0:
                         last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
                         last_chunk = self.cache.get_chunk(last_chunk_key)
-                        if last_chunk:
-                            logger.debug(f"last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
+                        # if last_chunk:
+                        #     logger.debug(f"last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
 
                 # k, v shapes: [batch, num_heads, seq_len, head_dim]
                 # (HuggingFace format for some models/versions)
@@ -748,14 +748,14 @@ class Worker:
                 new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
 
                 # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
-                if layer_idx == 0:
-                    logger.debug(f"_store_new_kv_chunks] After extraction: new_key.shape={new_key.shape}, new_value.shape={new_value.shape}")
-                    logger.debug(f"_store_new_kv_chunks] dtype: new_key={new_key.dtype}, new_value={new_value.dtype}")
-                    if new_key.shape[0] == 0:
-                        logger.error(f"❌ ERROR FOUND: new_key batch size is 0!")
-                        logger.error(f"   k.shape={k.shape} (batch={k.shape[0]})")
-                        logger.error(f"   total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, num_generated={num_generated}")
-                        logger.error(f"   This suggests k.shape[0] was already 0 from model output (Scenario 1 or 2)")
+                # if layer_idx == 0:
+                #     logger.debug(f"_store_new_kv_chunks] After extraction: new_key.shape={new_key.shape}, new_value.shape={new_value.shape}")
+                #     logger.debug(f"_store_new_kv_chunks] dtype: new_key={new_key.dtype}, new_value={new_value.dtype}")
+                #     if new_key.shape[0] == 0:
+                #         logger.error(f"❌ ERROR FOUND: new_key batch size is 0!")
+                #         logger.error(f"   k.shape={k.shape} (batch={k.shape[0]})")
+                #         logger.error(f"   total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, num_generated={num_generated}")
+                #         logger.error(f"   This suggests k.shape[0] was already 0 from model output (Scenario 1 or 2)")
 
                 # ✅ CRITICAL: Handle last chunk merge
                 if fill_last > 0 and last_chunk_id >= 0:
@@ -773,13 +773,13 @@ class Worker:
                         fill_value = fill_value.cpu()
 
                         # ✅ DEBUG: Capture the merge scenario (just before error)
-                        if layer_idx == 0:
-                            logger.debug(f"_store_new_kv_chunks] About to merge:")
-                            logger.debug(f"   last_chunk.key_tensor.shape={last_chunk.key_tensor.shape} (batch={last_chunk.key_tensor.shape[0]})")
-                            logger.debug(f"   fill_key.shape={fill_key.shape} (batch={fill_key.shape[0]})")
-                            if last_chunk.key_tensor.shape[0] != fill_key.shape[0]:
-                                logger.error(f"❌ BATCH MISMATCH: {last_chunk.key_tensor.shape[0]} != {fill_key.shape[0]}")
-                                logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
+                        # if layer_idx == 0:
+                        #     logger.debug(f"_store_new_kv_chunks] About to merge:")
+                        #     logger.debug(f"   last_chunk.key_tensor.shape={last_chunk.key_tensor.shape} (batch={last_chunk.key_tensor.shape[0]})")
+                        #     logger.debug(f"   fill_key.shape={fill_key.shape} (batch={fill_key.shape[0]})")
+                        #     if last_chunk.key_tensor.shape[0] != fill_key.shape[0]:
+                        #         logger.error(f"❌ BATCH MISMATCH: {last_chunk.key_tensor.shape[0]} != {fill_key.shape[0]}")
+                        #         logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
 
                         # Concatenate with existing last chunk KV (concatenate along seq_len dimension)
                         merged_key = torch.cat(
@@ -794,9 +794,9 @@ class Worker:
                         merged_value_cpu = merged_value.detach().cpu()
 
                         # ✅ DEBUG: Log dtype when merging chunks
-                        if layer_idx == 0:
-                            logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_cpu={merged_key_cpu.dtype}, merged_value_cpu={merged_value_cpu.dtype}")
-                            logger.debug(f"  → last_chunk original: key={last_chunk.key_tensor.dtype}, value={last_chunk.value_tensor.dtype}")
+                        # if layer_idx == 0:
+                        #     logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_cpu={merged_key_cpu.dtype}, merged_value_cpu={merged_value_cpu.dtype}")
+                        #     logger.debug(f"  → last_chunk original: key={last_chunk.key_tensor.dtype}, value={last_chunk.value_tensor.dtype}")
 
                         updated_chunk = KVChunk(
                             session_id=session_id,
