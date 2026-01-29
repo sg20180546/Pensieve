@@ -1,1 +1,4 @@
 CLAUDE.md
+*.md
+
+!README.md
