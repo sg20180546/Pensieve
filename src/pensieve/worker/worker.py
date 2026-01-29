@@ -1215,9 +1215,9 @@ class Worker:
                             fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
                             fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
 
-                        # ✅ Move fill tensors to CPU to match last_chunk (which is stored in CPU)
-                        fill_key = fill_key.cpu()
-                        fill_value = fill_value.cpu()
+                        # ✅ Chunks are stored on GPU for performance
+                        # Both fill_key and last_chunk.key_tensor are on GPU
+                        # No need to move to CPU - keep everything on GPU for faster merging
 
                         # ✅ DEBUG: Capture the merge scenario (just before error)
                         # if layer_idx == 0:
@@ -1229,6 +1229,7 @@ class Worker:
                         #         logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
 
                         # Concatenate with existing last chunk KV (concatenate along correct seq_len dimension)
+                        # Both on GPU - merge on GPU for performance
                         merged_key = torch.cat(
                             [last_chunk.key_tensor, fill_key], dim=seq_dim
                         )  # Concatenate along sequence dimension
@@ -1236,21 +1237,21 @@ class Worker:
                             [last_chunk.value_tensor, fill_value], dim=seq_dim
                         )
 
-                        # Update last chunk with merged KV
-                        merged_key_cpu = merged_key.detach().cpu()
-                        merged_value_cpu = merged_value.detach().cpu()
+                        # ✅ Update last chunk with merged KV (keep on GPU for performance)
+                        merged_key_gpu = merged_key.detach()
+                        merged_value_gpu = merged_value.detach()
 
                         # ✅ DEBUG: Log dtype when merging chunks
                         # if layer_idx == 0:
-                        #     logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_cpu={merged_key_cpu.dtype}, merged_value_cpu={merged_value_cpu.dtype}")
+                        #     logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_gpu={merged_key_gpu.dtype}, merged_value_gpu={merged_value_gpu.dtype}")
                         #     logger.debug(f"  → last_chunk original: key={last_chunk.key_tensor.dtype}, value={last_chunk.value_tensor.dtype}")
 
                         updated_chunk = KVChunk(
                             session_id=session_id,
                             chunk_id=last_chunk_id,
                             layer_idx=layer_idx,
-                            key_tensor=merged_key_cpu,
-                            value_tensor=merged_value_cpu,
+                            key_tensor=merged_key_gpu,
+                            value_tensor=merged_value_gpu,
                             context_length=last_chunk.context_length,
                             session_total_chunks=total_chunks,
                             num_layers=self.num_layers,
@@ -1305,20 +1306,20 @@ class Worker:
                     #   + (chunk_idx * chunk_size) (현재 루프의 청크들)
                     context_length = actual_context_before + last_chunk_size + fill_last + (chunk_idx * chunk_size)
 
-                    # Create chunk for this layer
-                    chunk_key_cpu = chunk_key.detach().cpu()
-                    chunk_value_cpu = chunk_value.detach().cpu()
+                    # Create chunk for this layer - KEEP DATA ON GPU
+                    chunk_key_gpu = chunk_key.detach()
+                    chunk_value_gpu = chunk_value.detach()
 
                     # ✅ DEBUG: Log tensor shape when storing chunks
                     if layer_idx == 0:
-                        logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_cpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
+                        logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_gpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
 
                     chunk = KVChunk(
                         session_id=session_id,
                         chunk_id=chunk_id,
                         layer_idx=layer_idx,
-                        key_tensor=chunk_key_cpu,
-                        value_tensor=chunk_value_cpu,
+                        key_tensor=chunk_key_gpu,
+                        value_tensor=chunk_value_gpu,
                         context_length=context_length,
                         session_total_chunks=total_chunks,
                         num_layers=self.num_layers,
