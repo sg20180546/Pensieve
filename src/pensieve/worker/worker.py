@@ -299,6 +299,11 @@ class Worker:
                     else:
                         # Turn 1: No cache, use provided mask
                         step_attention_mask = req_attention_mask
+
+                    # ✅ DEBUG: Log exact input to model at step 0
+                    logger.debug(f"[STEP 0 INPUT] {session_id}: step_input_ids.shape={step_input_ids.shape}, attention_mask_shape={req_attention_mask.shape if req_attention_mask is not None else 'None'}")
+                    if req_attention_mask is not None:
+                        logger.debug(f"[STEP 0 INPUT] {session_id}: attention_mask sum (non-padded tokens)={req_attention_mask.sum().item()}")
                 else:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
                     # CRITICAL: When using past_key_values, don't constrain attention_mask
@@ -414,6 +419,16 @@ class Worker:
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
 
+                # ✅ DEBUG: Track KV cache shape at each step to find where token is lost
+                if session_past_kv and len(session_past_kv) > 0:
+                    first_k, first_v = session_past_kv[0]
+                    if first_k is not None:
+                        kv_seq_len = first_k.shape[2]  # Get sequence dimension
+                        if step == 0:
+                            logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
+                        elif step % 10 == 0 or step == max_new_tokens - 1:  # Log every 10 steps and last step
+                            logger.debug(f"[KV TRACKING] {session_id} Step {step}: generated_so_far={step}, model_kv_seq_len={kv_seq_len}")
+
                 # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
                 # if step == 0 and session_past_kv:
                 #     first_k, first_v = session_past_kv[0]
@@ -463,6 +478,16 @@ class Worker:
             # Log generation summary for this session
             tokens_generated = len(generated_ids[req_idx])
             logger.debug(f"[_custom_generate] Session {session_id}: Generated {tokens_generated} tokens (max allowed: {max_new_tokens})")
+
+            # ✅ DEBUG: Log final KV shape before storage
+            if session_past_kv and len(session_past_kv) > 0:
+                final_k, final_v = session_past_kv[0]
+                if final_k is not None:
+                    final_seq_len = final_k.shape[2]
+                    expected_final_seq = len(req_input_ids) + tokens_generated
+                    logger.debug(f"[FINAL KV] {session_id}: final_k.shape={final_k.shape}, seq_len={final_seq_len}, expected={expected_final_seq}")
+                    if final_seq_len != expected_final_seq:
+                        logger.error(f"❌ KV SEQ LEN MISMATCH! Expected {expected_final_seq} but got {final_seq_len}")
 
             # Cache status after generation
             if _cache_debug_enabled and pensieve_cache is not None:
