@@ -421,11 +421,16 @@ class Worker:
 
         sequences = torch.stack(padded_sequences)
 
+        # ✅ CRITICAL: Return generated_ids_per_request directly (already computed, ground truth)
+        # This avoids trying to extract from padded batch sequences which causes token misalignment
+        generated_ids_per_request = [torch.tensor(ids, device=device, dtype=input_ids.dtype) for ids in generated_ids]
+
         return type("obj", (object,), {
             "sequences": sequences,
             "past_key_values": final_past_kv_per_session,  # ✅ Return per-session KV!
             "ttft": ttft_per_request,
-            "original_input_lengths": original_input_lengths  # ✅ Pass through for token extraction
+            "original_input_lengths": original_input_lengths,  # ✅ Keep for reference
+            "generated_ids_per_request": generated_ids_per_request  # ✅ NEW: Direct token IDs (ground truth)
         })()
 
     def _execute_cache_plan(self, cache_plan: CachePlan, batch: Batch = None) -> None:
@@ -585,13 +590,22 @@ class Worker:
         result = BatchResult(batch_id=batch.batch_id)
 
         # 1. Extract generated tokens per request
-        generated_sequences = outputs.sequences
+        # ✅ CRITICAL: Use generated_ids_per_request directly (computed during generation, ground truth)
+        # This avoids trying to extract from padded batch sequences which causes token misalignment
+        if hasattr(outputs, "generated_ids_per_request") and outputs.generated_ids_per_request:
+            generated_ids_per_request = outputs.generated_ids_per_request
+        else:
+            # Fallback to old extraction method (shouldn't happen with new code)
+            generated_sequences = outputs.sequences
+            generated_ids_per_request = []
+            for i, req in enumerate(batch.requests):
+                input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
+                generated_ids = generated_sequences[i][input_len:]
+                generated_ids_per_request.append(generated_ids)
 
         for i, req in enumerate(batch.requests):
-            # ✅ CRITICAL: Use DIRECT length from req.input_ids (most reliable)
-            # This avoids any batch sync issues with outputs.original_input_lengths
-            input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
-            generated_ids = generated_sequences[i][input_len:]
+            # Use the ground-truth generated token IDs
+            generated_ids = generated_ids_per_request[i]
 
             # Decode to string
             response_text = self.tokenizer.decode(
@@ -599,9 +613,10 @@ class Worker:
             )
 
             # DEBUG: Token counting verification
-            logger.debug(f"[Pensieve DEBUG] req_id={req.request_id}, req_idx={i}, req.input_ids.len={input_len}, full_seq.len={len(generated_sequences[i])}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
+            input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
+            logger.debug(f"[Pensieve DEBUG FIXED] req_id={req.request_id}, req_idx={i}, input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
             if len(generated_ids) > 20:
-                logger.debug(f"  First 20 tokens: {generated_ids[:20]}")
+                logger.debug(f"  First 20 tokens: {generated_ids[:20].tolist()}")
 
             # Update request
             req.generated_tokens = generated_ids.tolist()
