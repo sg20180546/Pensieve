@@ -918,6 +918,13 @@ class Worker:
                 new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
                 new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
 
+                # ✅ DEBUG for Turn 2+: Verify extracted token count
+                if existing_positions and layer_idx == 0:
+                    tokens_extracted = new_key.shape[2]
+                    logger.debug(f"[DEBUG TURN 2+] session_id={session_id}: num_generated={num_generated}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, tokens_extracted={tokens_extracted}")
+                    if tokens_extracted != num_generated:
+                        logger.error(f"❌ TURN 2+ TOKEN MISMATCH! Expected to extract {num_generated} new tokens but got {tokens_extracted}")
+
                 # ✅ RECALCULATE remaining_new for Turn 1 case
                 if not existing_positions:
                     # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
