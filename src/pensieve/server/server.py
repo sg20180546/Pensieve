@@ -341,13 +341,14 @@ class PensieveServer:
 
         # Save original forward
         original_forward = self.model.forward
+        start = time.time()
 
         def timed_forward(model_self, *args, **kwargs):
             """Hooked forward method that measures timing."""
-            start = time.time()
             # Call original forward (already bound to model instance)
             output = original_forward(*args, **kwargs)
-            elapsed = time.time() - start
+            # ✅ Synchronize GPU to ensure all computation is complete before measuring elapsed time
+            
 
             # Check if KV cache was used (distinguish prefill vs decode)
             # past_key_values will be in kwargs or args
@@ -358,19 +359,24 @@ class PensieveServer:
                 past_key_values = args[2]
 
             # Classify as prefill or decode based on KV cache state
-            if past_key_values is None:
+            # if past_key_values is None:
+                
                 # Prefill: processing input sequence (no KV cache used)
-                timing_data['prefill_time'] += elapsed
-            else:
+            # else:
+            if past_key_values is not None:
+                if decode_call_count[0] == 0:
+                    torch.cuda.synchronize()
+                    elapsed = time.time() - start
+                    timing_data['prefill_time'] = elapsed
                 # Decode: processing single token (with KV cache)
                 decode_call_count[0] += 1
 
                 # First decode call = first token generation
                 if decode_call_count[0] == 1:
                     timing_data['first_token_time'] = elapsed
-                else:
+                # else:
                     # Remaining tokens
-                    timing_data['decode_time'] += elapsed
+                    # timing_data['decode_time'] += elapsed
 
             return output
 
@@ -384,6 +390,7 @@ class PensieveServer:
         finally:
             # Restore original forward
             self.model.forward = original_forward
+        timing_data['decode_time']=time.time()-start-timing_data['prefill_time']-timing_data['first_token_time'] 
 
         return outputs, timing_data['prefill_time'], timing_data['first_token_time'], timing_data['decode_time']
 
