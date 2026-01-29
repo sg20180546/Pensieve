@@ -420,6 +420,7 @@ class PensieveServer:
 
         # Get conversation history (full recomputation in vLLM mode)
         history = self._get_session_history(session_id)
+        print("vllm history",history)
 
         # Full input includes all history + new user input
         full_input = history + user_input
@@ -785,7 +786,7 @@ Active Sessions: {len(self.active_sessions)}
 
                 # Get conversation history
                 history = self._get_session_history(session_id)
-
+                print("Penesieve history",history)
                 # Encode input
                 full_input = history + user_input
                 input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
