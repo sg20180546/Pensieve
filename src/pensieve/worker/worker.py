@@ -123,7 +123,7 @@ class Worker:
             prefill_end = time.time()
             prefill_time_elapsed = prefill_end - prefill_start
             # 3. Prepare batch inputs
-            input_ids, attention_mask = self._prepare_batch_inputs(batch)
+            input_ids, attention_mask, original_input_lengths = self._prepare_batch_inputs(batch)
 
             # 4. Create custom cache for this batch (always, even if empty)
             # Design: Pensieve always has cache object, but passes None to model if empty
@@ -146,6 +146,7 @@ class Worker:
                         pensieve_cache=pensieve_cache,
                         batch=batch,
                         max_new_tokens=max_new_tokens,
+                        original_input_lengths=original_input_lengths,
                     )
                 except Exception as e:
                     print(f"Error during custom generation: {e}")
@@ -189,6 +190,7 @@ class Worker:
         pensieve_cache,
         batch: Batch,
         max_new_tokens: int = 32,
+        original_input_lengths: List[int] = None,
     ) -> Dict:
         """Custom generation loop - processes each session independently.
 
@@ -204,17 +206,19 @@ class Worker:
         - Maintains correctness for multi-session batches
 
         Args:
-            input_ids: [batch_size, seq_len] input tokens
+            input_ids: [batch_size, seq_len] input tokens (may be padded)
             attention_mask: [batch_size, seq_len] attention mask
             pensieve_cache: PensieveCache instance (maps session_id to cache)
             batch: Original batch
             max_new_tokens: Max tokens to generate
+            original_input_lengths: List of original input lengths BEFORE padding
 
         Returns:
             Dictionary with:
             - sequences: [batch_size, seq_len+max_new_tokens] all tokens
             - past_key_values: Final KV cache (not used in per-session mode)
             - ttft: Dict of TTFT per request_id (seconds)
+            - original_input_lengths: Original input lengths before padding (for token extraction)
         """
         batch_size = len(batch.requests)
         device = input_ids.device
@@ -420,7 +424,8 @@ class Worker:
         return type("obj", (object,), {
             "sequences": sequences,
             "past_key_values": final_past_kv_per_session,  # ✅ Return per-session KV!
-            "ttft": ttft_per_request
+            "ttft": ttft_per_request,
+            "original_input_lengths": original_input_lengths  # ✅ Pass through for token extraction
         })()
 
     def _execute_cache_plan(self, cache_plan: CachePlan, batch: Batch = None) -> None:
@@ -474,7 +479,7 @@ class Worker:
 
     def _prepare_batch_inputs(
         self, batch: Batch
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
         """Prepare batch inputs for model.
 
         CRITICAL: Sessions must NOT attend to each other!
@@ -495,12 +500,16 @@ class Worker:
             batch: Batch with requests (each from different session)
 
         Returns:
-            (input_ids, attention_mask) tensors
+            (input_ids, attention_mask, original_input_lengths) tensors
         """
+        # Track original input lengths BEFORE padding
+        original_input_lengths = []
+
         # Find max sequence length
         max_len = 0
         for req in batch.requests:
             seq_len = len(req.input_ids) if req.input_ids.dim() > 0 else 0
+            original_input_lengths.append(seq_len)
             max_len = max(max_len, seq_len)
 
         # ✅ DEBUG: Check for empty input scenario
@@ -550,7 +559,7 @@ class Worker:
 
         batch_attention_mask = batch_attention_mask.to(self.device)
 
-        return batch_input_ids, batch_attention_mask
+        return batch_input_ids, batch_attention_mask, original_input_lengths
 
     def _process_outputs(
         self,
@@ -577,14 +586,21 @@ class Worker:
 
         # 1. Extract generated tokens per request
         generated_sequences = outputs.sequences
-        input_len_per_req = [
-            len(req.input_ids) if req.input_ids.dim() > 0 else 1
-            for req in batch.requests
-        ]
+
+        # ✅ Use original input lengths (BEFORE padding in _prepare_batch_inputs)
+        # This ensures we correctly extract generated tokens, not padded positions
+        if hasattr(outputs, 'original_input_lengths') and outputs.original_input_lengths:
+            input_len_per_req = outputs.original_input_lengths
+        else:
+            # Fallback if original_input_lengths not provided
+            input_len_per_req = [
+                len(req.input_ids) if req.input_ids.dim() > 0 else 1
+                for req in batch.requests
+            ]
 
         for i, req in enumerate(batch.requests):
             # Extract tokens generated for this request
-            # (Everything after the input)
+            # (Everything after the input, using ORIGINAL input length before padding)
             input_len = input_len_per_req[i]
             generated_ids = generated_sequences[i][input_len:]
 
@@ -593,8 +609,9 @@ class Worker:
                 generated_ids, skip_special_tokens=True
             )
 
-            # DEBUG: Token counting verification
-            logger.debug(f"[Pensieve DEBUG] req_id={req.request_id}, input_ids shape={req.input_ids.shape if hasattr(req.input_ids, 'shape') else len(req.input_ids)}, input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
+            # DEBUG: Token counting verification (FIXED: now using original input lengths)
+            logger.debug(f"[Pensieve DEBUG FIXED] req_id={req.request_id}, req_idx={i}, original_input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
+            logger.debug(f"  → full_seq length={len(generated_sequences[i])}, generated part={generated_sequences[i][input_len:]}")
 
             # Update request
             req.generated_tokens = generated_ids.tolist()
