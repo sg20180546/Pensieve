@@ -4,6 +4,7 @@ import torch
 from typing import Dict, List, Optional, Tuple
 import sys
 import os
+import traceback
 
 # Try to import from transformers
 try:
