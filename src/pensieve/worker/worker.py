@@ -243,7 +243,7 @@ class Worker:
             req_attention_mask = attention_mask[req_idx:req_idx+1]  # [1, seq_len]
 
             # ✅ DEBUG: Check batch extraction (Scenario 2)
-            logger.debug(f"_custom_generate] Session {session_id}: req_input_ids.shape={req_input_ids.shape}, req_attention_mask.shape={req_attention_mask.shape}")
+            # logger.debug(f"_custom_generate] Session {session_id}: req_input_ids.shape={req_input_ids.shape}, req_attention_mask.shape={req_attention_mask.shape}")
 
             # Get cached KV for this session (if available in pensieve_cache)
             # KEY: Only pass cache to model if it has data
@@ -375,10 +375,10 @@ class Worker:
             # Do NOT store req_idx - it will cause batch extraction issues when req_idx > 0
             final_past_kv_per_session[session_id] = session_past_kv
             # ✅ DEBUG: Confirm tuple packing
-            if session_past_kv and len(session_past_kv) > 0:
-                first_k, first_v = session_past_kv[0]
-                if first_k is not None:
-                    logger.debug(f"_custom_generate] Packed session_id={session_id}, kv[0].shape={first_k.shape}")
+            # if session_past_kv and len(session_past_kv) > 0:
+            #     first_k, first_v = session_past_kv[0]
+            #     if first_k is not None:
+            #         logger.debug(f"_custom_generate] Packed session_id={session_id}, kv[0].shape={first_k.shape}")
 
         # Reconstruct sequences
         all_sequences = []
@@ -496,11 +496,11 @@ class Worker:
             max_len = max(max_len, seq_len)
 
         # ✅ DEBUG: Check for empty input scenario
-        logger.debug(f"_prepare_batch_inputs] batch_size={len(batch.requests)}, max_seq_len={max_len}")
-        if max_len == 0:
-            logger.warning(f"⚠️ WARNING: All requests have empty input_ids! batch_size={len(batch.requests)}")
-            for i, req in enumerate(batch.requests):
-                logger.warning(f"   Request {i}: input_ids.shape={req.input_ids.shape}, dim={req.input_ids.dim()}")
+        # logger.debug(f"_prepare_batch_inputs] batch_size={len(batch.requests)}, max_seq_len={max_len}")
+        # if max_len == 0:
+        #     logger.warning(f"⚠️ WARNING: All requests have empty input_ids! batch_size={len(batch.requests)}")
+        #     for i, req in enumerate(batch.requests):
+        #         logger.warning(f"   Request {i}: input_ids.shape={req.input_ids.shape}, dim={req.input_ids.dim()}")
 
         input_ids_list = []
 
@@ -843,8 +843,8 @@ class Worker:
                     chunk_value_cpu = chunk_value.detach().cpu()
 
                     # ✅ DEBUG: Log dtype when storing chunks
-                    if layer_idx == 0:
-                        logger.debug(f"_store_new_kv_chunks] Storing chunk: key_cpu={chunk_key_cpu.dtype}, value_cpu={chunk_value_cpu.dtype}")
+                    # if layer_idx == 0:
+                    #     logger.debug(f"_store_new_kv_chunks] Storing chunk: key_cpu={chunk_key_cpu.dtype}, value_cpu={chunk_value_cpu.dtype}")
 
                     chunk = KVChunk(
                         session_id=session_id,
