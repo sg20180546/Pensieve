@@ -109,6 +109,7 @@ class Worker:
             BatchResult with generated tokens and statistics
         """
         start_time = time.time()
+        logger.debug(f"[execute_batch] START: batch_id={batch.batch_id}, num_requests={len(batch.requests)}, max_new_tokens will be extracted from requests")
 
         # 1. PIN all sessions in this batch to protect from concurrent eviction
         session_ids = [req.session_id for req in batch.requests]
@@ -228,7 +229,7 @@ class Worker:
             # 50256 = GPT-2/GPT-3, 2 = common default, 0 = last resort
             eos_token_id = 50256
 
-        # print(f"  Using EOS token ID: {eos_token_id}")
+        logger.debug(f"[_custom_generate] Using EOS token ID: {eos_token_id}, max_new_tokens: {max_new_tokens}")
 
         # Track results per request
         generated_ids = [[] for _ in range(batch_size)]
@@ -369,8 +370,11 @@ class Worker:
 
                 # Check for EOS
                 if token_id == eos_token_id:
-                    # print(f"  [EOS reached at step {step}]")
+                    logger.debug(f"[_custom_generate] Session {session_id}: EOS reached at step {step}, generated {len(generated_ids[req_idx])} tokens")
                     break
+
+            # Log generation summary for this session
+            logger.debug(f"[_custom_generate] Session {session_id}: Generated {len(generated_ids[req_idx])} tokens (max allowed: {max_new_tokens})")
 
             # ✅ Store final KV for this session (already per-session, no req_idx needed)
             # CRITICAL: session_past_kv is already [1, num_heads, seq, head_dim] from per-session processing
@@ -393,6 +397,8 @@ class Worker:
                     ),
                 ]
             )
+            req = batch.requests[i]
+            logger.debug(f"[_custom_generate SUMMARY] req_id={req.request_id}, input_len={len(input_ids[i])}, generated_len={len(generated_ids[i])}, total_len={len(full_seq)}, max_allowed={max_new_tokens}")
             all_sequences.append(full_seq)
 
         # Pad to same length
