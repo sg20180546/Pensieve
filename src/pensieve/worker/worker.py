@@ -542,6 +542,16 @@ class Worker:
                 # print(input_cache)
                 # print(input_cache)
                 
+                # 🔴 DEBUG: Check what we're passing as past_key_values
+                if step == 0:  # Only on first step
+                    cache_type = type(input_cache).__name__ if input_cache is not None else "None"
+                    cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
+                    print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
+                    print(f"  type: {cache_type}", flush=True)
+                    print(f"  len: {cache_len}", flush=True)
+                    print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
+                    print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
+
                 # Forward pass - with session-specific cache
                 outputs = self.model(
                     step_input_ids,

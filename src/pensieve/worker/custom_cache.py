@@ -54,16 +54,16 @@ class PensieveCache(Cache):
         # HuggingFace Cache interface requires 'layers' attribute
         self.layers = [None] * num_layers
 
-    def _write_debug_log(self, message: str) -> None:
-        """Write to debug log with immediate disk sync."""
-        debug_file = "/home/elicer/pensieve_cache_debug.log"
-        try:
-            with open(debug_file, "a", buffering=1) as f:
-                f.write(message)
-                f.flush()
-                os.fsync(f.fileno())  # Force immediate disk write
-        except Exception:
-            pass  # Silently ignore file write errors
+    # def _write_debug_log(self, message: str) -> None:
+    #     """Write to debug log with immediate disk sync."""
+    #     debug_file = "/home/elicer/pensieve_cache_debug.log"
+    #     try:
+    #         with open(debug_file, "a", buffering=1) as f:
+    #             f.write(message)
+    #             f.flush()
+    #             os.fsync(f.fileno())  # Force immediate disk write
+    #     except Exception:
+    #         pass  # Silently ignore file write errors
 
     def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get KV cache for a specific layer.
@@ -84,6 +84,17 @@ class PensieveCache(Cache):
         """
         import sys
         import traceback
+
+        # 🔴 CRITICAL: Log to ALL outputs to ensure visibility
+        msg = f"\n🔴🔴🔴 [__getitem__ CALLED] layer_idx={layer_idx} 🔴🔴🔴\n"
+        print(msg, flush=True)  # stdout
+        print(msg, file=sys.stderr, flush=True)  # stderr
+        try:
+            with open("/tmp/pensieve_getitem.log", "a") as f:
+                f.write(msg)
+                f.flush()
+        except:
+            pass
 
         # CRITICAL: Use FILE-BASED logging to bypass buffering issues
         debug_file = "/home/elicer/pensieve_cache_debug.log"
@@ -109,6 +120,48 @@ class PensieveCache(Cache):
             sys.stderr.flush()
         except Exception as e:
             pass
+
+        # ✅ THOROUGH INSPECTION: Print exact request state at __getitem__ call
+        if layer_idx == 0:
+            print(f"\n{'='*80}", flush=True)
+            print(f"[__getitem__ STATE] layer_idx={layer_idx} - PRE-FETCH INSPECTION", flush=True)
+            print(f"{'='*80}", flush=True)
+            print(f"batch_info keys: {list(self.batch_info.keys())}", flush=True)
+
+            # For each request, show what we're looking for
+            for req_id, info in self.batch_info.items():
+                session_id = info.get('session_id')
+                positions = info.get('positions', [])
+                print(f"\n  Request: {req_id}")
+                print(f"    session_id: {session_id}")
+                print(f"    positions (chunk_ids): {positions}")
+                print(f"    Looking for chunks: {[(session_id, pos, layer_idx) for pos in sorted(positions)]}")
+
+            # Show what's actually in cache
+            gpu_chunks = len(self.cache_manager.gpu_cache)
+            cpu_chunks = len(self.cache_manager.cpu_cache)
+            print(f"\nCache state:")
+            print(f"  GPU: {gpu_chunks} chunks")
+            print(f"  CPU: {cpu_chunks} chunks")
+
+            # Organize by session
+            session_chunks = {}
+            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                for key, chunk in cache_dict.items():
+                    if chunk.session_id not in session_chunks:
+                        session_chunks[chunk.session_id] = []
+                    session_chunks[chunk.session_id].append(chunk)
+
+            print(f"\nChunks by session:")
+            for sid, chunks in sorted(session_chunks.items()):
+                chunk_ids = sorted(set(c.chunk_id for c in chunks))
+                layer_ids = sorted(set(c.layer_idx for c in chunks))
+                print(f"  {sid}:")
+                print(f"    chunk_ids: {chunk_ids}")
+                print(f"    layer_ids: {layer_ids}")
+                print(f"    total: {len(chunks)} chunks")
+
+            print(f"{'='*80}\n", flush=True)
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
@@ -154,21 +207,31 @@ class PensieveCache(Cache):
             # Gather chunks for this layer at all positions in order
             for position in sorted(positions):
                 # Search for chunk at (session_id, position, layer_idx)
-                for cache_dict in [self.cache_manager.gpu_cache,
-                                  self.cache_manager.cpu_cache]:
+                chunk_found = False
+                for cache_dict_name, cache_dict in [("GPU", self.cache_manager.gpu_cache),
+                                                    ("CPU", self.cache_manager.cpu_cache)]:
                     for chunk in cache_dict.values():
                         if (chunk.session_id == session_id and
                             chunk.chunk_id == position and
                             chunk.layer_idx == layer_idx):
+                            chunk_found = True
                             chunk.update_access_time()
                             # ✅ Only add non-empty chunks
                             if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
                                 all_keys.append(chunk.key_tensor)
                                 all_values.append(chunk.value_tensor)
-                                print(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
+                                print(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}) from {cache_dict_name}, shape={chunk.key_tensor.shape}\n")
                             else:
                                 print(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
                             break
+                    if chunk_found:
+                        break
+
+                # If chunk wasn't found, log it clearly
+                if not chunk_found:
+                    print(f"[CACHE_DEBUG] ❌ CHUNK NOT FOUND in primary path: ({session_id}, {position}, {layer_idx})\n", flush=True)
+                    with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
+                        f.write(f"[CACHE_DEBUG] ❌ CHUNK NOT FOUND: ({session_id}, {position}, {layer_idx})\n")
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
         # This handles cases where chunk_keys wasn't populated in Request object
