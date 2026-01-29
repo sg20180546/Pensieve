@@ -339,11 +339,11 @@ class Worker:
                 expected_len = input_cache_len + input_seq_len
 
                 # ✅ DEBUG OUTPUT: Track KV cache growth per step
-                logger.debug(f"[KV Cache Tracking] Step {step}, Session {session_id}")
-                logger.debug(f"  Input cache length: {input_cache_len}")
-                logger.debug(f"  Input token count: {input_seq_len}")
-                logger.debug(f"  Expected output length: {expected_len}")
-                logger.debug(f"  Actual output length: {output_cache_len}")
+                # logger.debug(f"[KV Cache Tracking] Step {step}, Session {session_id}")
+                # logger.debug(f"  Input cache length: {input_cache_len}")
+                # logger.debug(f"  Input token count: {input_seq_len}")
+                # logger.debug(f"  Expected output length: {expected_len}")
+                # logger.debug(f"  Actual output length: {output_cache_len}")
 
                 # ✅ CORRECTNESS CHECK: Ensure no duplication
                 if output_cache_len != expected_len:
