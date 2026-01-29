@@ -271,7 +271,6 @@ def concurrent_client_worker(
         request_interval: Time to wait between requests (seconds)
         results_queue: Thread-safe queue for collecting results
     """
-    ttfts = []
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
 
@@ -291,18 +290,15 @@ def concurrent_client_worker(
             turn_end = time.time()
             tail_latency = turn_end - turn_start
 
-            # Get TTFT from server (last measured value)
-            ttft = server.last_ttft
-
-            ttfts.append(ttft)
             tail_latencies.append(tail_latency)
         except Exception as e:
             print(f"Error in client {client_id} turn {turn_idx}: {e}")
 
     # Put results in queue
+    # Note: TTFT measurements are accumulated in server.all_ttfts and collected at aggregate level
     results_queue.put({
         "client_id": client_id,
-        "ttfts": ttfts,
+        "ttfts": [],  # TTFT measured at server level, not per-client
         "tail_latencies": tail_latencies,
         "response_count": len(conversations),
     })
@@ -330,7 +326,6 @@ def concurrent_client_worker_async(
         request_interval: Time to wait between requests (seconds)
         results_queue: Thread-safe queue for collecting results
     """
-    ttfts = []
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
     request_ids = []
@@ -355,20 +350,16 @@ def concurrent_client_worker_async(
             # Wait for result (with timeout)
             response = server.get_request_result(request_id, timeout=30.0)
             if response:
-                # Get TTFT from server (last measured value for this request)
-                ttft = server.last_ttft
-                # Note: For async batched execution, tail_latency would come from batch_result
-                # For now, estimate as difference from request submission
-                tail_latency = 0.2  # TODO: Measure actual per-request latency in batch results
-                ttfts.append(ttft)
-                tail_latencies.append(tail_latency)
+                # Note: For async batched execution, TTFT measurements are accumulated in server.all_ttfts
+                # We don't collect per-client TTFT here; instead, main.py uses server.all_ttfts directly
+                tail_latencies.append(0.2)  # Placeholder (actual per-request timing would need batch_result)
         except Exception as e:
             print(f"Error retrieving result {request_id} for client {client_id}: {e}")
 
     # Put results in queue
     results_queue.put({
         "client_id": client_id,
-        "ttfts": ttfts,
+        "ttfts": [],  # TTFT measured at server level, collected via server.all_ttfts
         "tail_latencies": tail_latencies,
         "response_count": len(conversations),
     })
