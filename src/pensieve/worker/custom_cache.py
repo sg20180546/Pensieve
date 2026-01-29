@@ -74,7 +74,7 @@ class PensieveCache(Cache):
         import traceback
 
         # CRITICAL: Use FILE-BASED logging to bypass buffering issues
-        debug_file = "/tmp/pensieve_cache_debug.log"
+        debug_file = "/home/elicer/pensieve_cache_debug.log"
         try:
             with open(debug_file, "a") as f:
                 f.write(f"\n========== [CACHE_DEBUG] __getitem__ START layer_idx={layer_idx} ==========\n")
@@ -94,7 +94,7 @@ class PensieveCache(Cache):
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached\n")
             return self._layer_kv_cache[layer_idx]
 
@@ -121,14 +121,14 @@ class PensieveCache(Cache):
         all_keys = []
         all_values = []
 
-        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
             f.write(f"[CACHE_DEBUG] Starting primary path for layer_idx={layer_idx}\n")
 
         for request_id, request_info in self.batch_info.items():
             session_id = request_info.get('session_id')
             positions = request_info.get('positions', [])  # chunk_ids
 
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Primary path: request_id={request_id}, session_id={session_id}, positions={positions}\n")
 
             # Gather chunks for this layer at all positions in order
@@ -145,23 +145,23 @@ class PensieveCache(Cache):
                             if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
                                 all_keys.append(chunk.key_tensor)
                                 all_values.append(chunk.value_tensor)
-                                with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                                     f.write(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx}), shape={chunk.key_tensor.shape}\n")
                             else:
-                                with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                                     f.write(f"[CACHE_DEBUG] ⚠️ Skipping empty chunk: ({session_id}, {position}, {layer_idx})\n")
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
         # This handles cases where chunk_keys wasn't populated in Request object
         if not all_keys:
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Primary path found 0 chunks, triggering fallback scan for layer_idx={layer_idx}...\n")
 
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Fallback: Looking for session_ids={session_ids}, layer_idx={layer_idx}\n")
                 f.write(f"[CACHE_DEBUG] Available in cache: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)} chunks\n")
 
@@ -172,15 +172,15 @@ class PensieveCache(Cache):
                 for chunk in cache_dict.values():
                     chunk_count += 1
                     if layer_idx == 0 and chunk_count <= 5:
-                        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                             f.write(f"[CACHE_DEBUG] Scanning chunk {chunk_count}: session_id={chunk.session_id}, chunk_id={chunk.chunk_id}, layer_idx={chunk.layer_idx}, matches_session={chunk.session_id in session_ids}, matches_layer={chunk.layer_idx == layer_idx}\n")
                     if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
                         key = (chunk.session_id, chunk.chunk_id)
                         found_chunks[key] = chunk
                         if layer_idx == 0:
-                            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                                 f.write(f"[CACHE_DEBUG] ✓ Found chunk in fallback: {key}\n")
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Fallback scan complete: Total chunks scanned={chunk_count}, matched={len(found_chunks)}\n")
 
             # Add chunks in order of chunk_id (grouped by session_id)
@@ -194,7 +194,7 @@ class PensieveCache(Cache):
                         all_keys.append(chunk.key_tensor)
                         all_values.append(chunk.value_tensor)
                     else:
-                        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                             f.write(f"[CACHE_DEBUG] ⚠️ Fallback: Skipping empty chunk: ({session_id}, {chunk.chunk_id}, {layer_idx})\n")
 
             if layer_idx == 0:
@@ -203,30 +203,30 @@ class PensieveCache(Cache):
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
             keys = torch.cat(all_keys, dim=1)  # Concatenate along sequence dimension
             values = torch.cat(all_values, dim=1)
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
         else:
             # No cached KV for this layer, return empty tensors
             # Model will treat this as no past_key_values for this layer
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors\n")
                 f.write(f"all_keys length: {len(all_keys)}\n")
                 f.write(f"all_values length: {len(all_values)}\n")
                 f.write(f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
             keys = torch.empty(0, dtype=torch.float16)
             values = torch.empty(0, dtype=torch.float16)
-            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
                 f.write(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
         self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
 
-        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+        with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
             f.write(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
