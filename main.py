@@ -143,6 +143,12 @@ def main():
         help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
     )
     parser.add_argument(
+        "--min_turns",
+        type=int,
+        default=5,
+        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
+    )
+    parser.add_argument(
         "--num_concurrent_users",
         type=int,
         default=3,
@@ -1034,7 +1040,7 @@ def run_dataset_evaluation(args):
             conversations = load_sharept_dataset(
                 num_conversations=args.num_conversations,
                 max_turns=args.max_turns,
-                min_turns=2,
+                min_turns=args.min_turns,
             )
         else:
             raise NotImplementedError(f"Dataset '{args.dataset}' not yet supported. Use 'sharegt'.")
