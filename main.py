@@ -574,7 +574,7 @@ def run_concurrent_comparison(args):
     for client_id in range(num_users):
         _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker_async,  # ✅ Use async version
+            target=concurrent_client_worker,  # ✅ Use blocking version for fair comparison
             args=(
                 client_id,
                 pensieve_server,
@@ -684,7 +684,7 @@ def run_concurrent_comparison(args):
     for client_id in range(num_users):
         _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker_vllm_async,  # ✅ Async version for vLLM (no batching)
+            target=concurrent_client_worker,  # ✅ Use blocking version for fair comparison
             args=(
                 client_id,
                 vllm_server,
