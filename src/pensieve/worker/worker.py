@@ -426,8 +426,12 @@ class Worker:
                         kv_seq_len = first_k.shape[2]  # Get sequence dimension
                         if step == 0:
                             logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
-                        elif step % 10 == 0 or step == max_new_tokens - 1:  # Log every 10 steps and last step
+                        elif step % 5 == 0 or step == max_new_tokens - 1:  # Log every 5 steps and last step
                             logger.debug(f"[KV TRACKING] {session_id} Step {step}: generated_so_far={step}, model_kv_seq_len={kv_seq_len}")
+
+                        # Log right before EOS
+                        if token_id == eos_token_id:
+                            logger.debug(f"[KV BEFORE EOS] {session_id} Step {step}: kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
 
                 # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
                 # if step == 0 and session_past_kv:
