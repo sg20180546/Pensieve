@@ -65,20 +65,15 @@ class PensieveServer:
         self._tokenizer = None
         self._model_loaded = False
 
-        # For Pensieve mode
-        if inference_mode == InferenceMode.PENSIEVE:
-            self.cache = TwoTierCache(
-                gpu_capacity_gb=gpu_capacity_gb,
-                cpu_capacity_gb=cpu_capacity_gb,
-                device=device,
-            )
-            # Phase 4: Initialize scheduler and worker
-            self.scheduler = BatchScheduler(self.cache, max_batch_size=8)
-            self.worker = None  # Lazy load with model
-        else:
-            self.cache = None
-            self.scheduler = None
-            self.worker = None
+        # Store capacity parameters for lazy cache initialization
+        self._gpu_capacity_gb = gpu_capacity_gb
+        self._cpu_capacity_gb = cpu_capacity_gb
+
+        # For Pensieve mode: cache, scheduler, worker are initialized lazily in _get_worker()
+        # when we know the model's num_hidden_layers
+        self.cache = None
+        self.scheduler = None
+        self.worker = None
 
         # Request management
         self.request_queue: List[Request] = []
@@ -166,6 +161,18 @@ class PensieveServer:
     def _get_worker(self):
         """Lazy load worker for Pensieve mode with batch-level recovery manager."""
         if self.inference_mode == InferenceMode.PENSIEVE and self.worker is None:
+            # ✅ Initialize cache with actual model's num_layers (lazy init)
+            if self.cache is None:
+                num_layers = self.model.config.num_hidden_layers
+                self.cache = TwoTierCache(
+                    gpu_capacity_gb=self._gpu_capacity_gb,
+                    cpu_capacity_gb=self._cpu_capacity_gb,
+                    num_layers=num_layers,
+                    device=self.device,
+                )
+                # Initialize scheduler after cache is ready
+                self.scheduler = BatchScheduler(self.cache, max_batch_size=8)
+
             # ✅ Initialize batch-level recovery manager (Phase 4.5 optimization)
             # BatchedRecoveryManager handles multiple sessions' dropped chunks efficiently,
             # respecting both layer-wise and token-wise dependencies

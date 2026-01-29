@@ -157,7 +157,7 @@ class BatchScheduler:
             # Check each position and EACH LAYER's chunk status
             for pos in positions:
                 # ✅ Check all layers (each layer can have different availability)
-                for layer_idx in range(32):  # 32 layers in typical LLM
+                for layer_idx in range(self.cache.num_layers):
                     chunk_key = f"{session_id}:chunk:{pos}:layer:{layer_idx}"
                     chunk = self.cache.get_chunk(chunk_key)
 
