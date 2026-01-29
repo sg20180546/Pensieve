@@ -274,7 +274,8 @@ class Worker:
                 else:
                     # Cache has chunks, pass full PensieveCache
                     # (it will filter to only this session's chunks)
-                    session_cache = pensieve_cache
+                    # session_cache = pensieve_cache
+                    session_cache=None
                     if _cache_debug_enabled:
                         logger.debug(f"[DEBUG] {session_id}: pensieve_cache has chunks → session_cache=PensieveCache")
             except Exception as e:
@@ -339,7 +340,7 @@ class Worker:
                     input_cache_len = 0
                 
                 input_seq_len = step_input_ids.shape[1]  # Current input token count
-
+                # input_len = len(req.input_ids)
                 # ✅ VERIFY PENSIEVE WORKING: Only log when Step 0 has cache from previous turns
                 # This proves multi-turn cache reuse is working (not same-turn cache)
                 # Step 0 + input_cache_len > 0 = cross-turn cache reuse (NEW TURN using previous cache)
