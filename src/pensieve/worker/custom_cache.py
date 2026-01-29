@@ -265,7 +265,10 @@ class PensieveCache(Cache):
             self._seq_length = keys.shape[2]  # Gemma format
         else:
             self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0  # Llama or others
-
+        if keys.numel() == 0:
+            print(f"!!! CRITICAL: Layer {layer_idx} is returning an EMPTY tensor!")
+            # 여기서 강제로 에러를 내면 traceback에 __getitem__이 찍힙니다.
+            # raise ValueError("Empty KV Cache detected")
         print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
