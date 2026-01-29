@@ -241,6 +241,12 @@ class PensieveServer:
         input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
         input_ids = input_ids.squeeze(0)
 
+        # ✅ CRITICAL FIX: Retrieve chunk_keys from cache for multi-turn reuse
+        # On Turn 2+, the cache has chunks from previous turns stored in session_chunks
+        chunk_keys = []
+        if session_id in self.cache.session_chunks:
+            chunk_keys = self.cache.session_chunks[session_id][:]  # Copy the list
+
         # Create request for unified batching pipeline
         request = Request(
             session_id=session_id,
@@ -248,6 +254,7 @@ class PensieveServer:
             input_ids=input_ids,
             max_new_tokens=max_new_tokens,
             original_text=user_input,  # Store user input for history tracking
+            chunk_keys=chunk_keys,  # ✅ Populated from cache for Turn 2+
         )
 
         # Time prefill + generation
