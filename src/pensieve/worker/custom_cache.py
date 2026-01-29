@@ -54,6 +54,17 @@ class PensieveCache(Cache):
         # HuggingFace Cache interface requires 'layers' attribute
         self.layers = [None] * num_layers
 
+    def _write_debug_log(self, message: str) -> None:
+        """Write to debug log with immediate disk sync."""
+        debug_file = "/home/elicer/pensieve_cache_debug.log"
+        try:
+            with open(debug_file, "a", buffering=1) as f:
+                f.write(message)
+                f.flush()
+                os.fsync(f.fileno())  # Force immediate disk write
+        except Exception:
+            pass  # Silently ignore file write errors
+
     def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get KV cache for a specific layer.
 
@@ -76,14 +87,20 @@ class PensieveCache(Cache):
         # CRITICAL: Use FILE-BASED logging to bypass buffering issues
         debug_file = "/home/elicer/pensieve_cache_debug.log"
         try:
-            with open(debug_file, "a") as f:
+            with open(debug_file, "a", buffering=1) as f:  # Line buffering
                 f.write(f"\n========== [CACHE_DEBUG] __getitem__ START layer_idx={layer_idx} ==========\n")
                 f.write(f"batch_info keys: {list(self.batch_info.keys())}\n")
                 f.write(f"batch_info values: {self.batch_info}\n")
                 f.flush()
+                os.fsync(f.fileno())  # ✅ Force sync to disk immediately
         except Exception as e:
-            with open(debug_file, "a") as f:
-                f.write(f"ERROR in debug write: {e}\n")
+            try:
+                with open(debug_file, "a", buffering=1) as f:
+                    f.write(f"ERROR in debug write: {e}\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except:
+                pass
 
         # Also try stderr for redundancy
         try:
@@ -94,8 +111,10 @@ class PensieveCache(Cache):
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
-            with open("/home/elicer/pensieve_cache_debug.log", "a") as f:
+            with open("/home/elicer/pensieve_cache_debug.log", "a", buffering=1) as f:
                 f.write(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached\n")
+                f.flush()
+                os.fsync(f.fileno())
             return self._layer_kv_cache[layer_idx]
 
         # Debug: Print cache state on first call (for visibility)
