@@ -342,7 +342,6 @@ class Worker:
                     if hasattr(input_cache, 'get_seq_length'):
                         # PensieveCache object
                         input_cache_len = input_cache.get_seq_length()
-                        print("hello input_cache_len",input_cache_len)
                     else:
                         # Standard HuggingFace cache (tuple of tuples)
                         try:
@@ -488,6 +487,40 @@ class Worker:
                     logger.debug(f"[FINAL KV] {session_id}: final_k.shape={final_k.shape}, seq_len={final_seq_len}, expected={expected_final_seq}")
                     if final_seq_len != expected_final_seq:
                         logger.error(f"❌ KV SEQ LEN MISMATCH! Expected {expected_final_seq} but got {final_seq_len}")
+
+                        # ✅ TOKEN RECOVERY: One missing token detected, recover it
+                        token_loss = expected_final_seq - final_seq_len
+                        if tokens_generated > 0 and token_loss > 0:
+                            logger.warning(f"[TOKEN RECOVERY] Detecting {token_loss} token loss. Attempting recovery with last generated token...")
+
+                            try:
+                                # Get the last generated token
+                                last_token_id = generated_ids[req_idx][-1]
+                                last_token_tensor = torch.tensor([[last_token_id]], device=model_device, dtype=torch.long)
+
+                                # Forward pass with just the last token to get its KV representation
+                                recovery_outputs = self.model(
+                                    last_token_tensor,
+                                    past_key_values=session_past_kv,
+                                    use_cache=True,
+                                    return_dict=True,
+                                )
+
+                                # Update KV cache with the recovered token
+                                session_past_kv = recovery_outputs.past_key_values
+
+                                # Verify recovery
+                                if session_past_kv and len(session_past_kv) > 0:
+                                    recovered_k, recovered_v = session_past_kv[0]
+                                    if recovered_k is not None:
+                                        recovered_seq_len = recovered_k.shape[2]
+                                        logger.debug(f"[TOKEN RECOVERY] After recovery: seq_len={recovered_seq_len}, expected={expected_final_seq}")
+                                        if recovered_seq_len == expected_final_seq:
+                                            logger.info(f"✅ TOKEN RECOVERY SUCCESS! Recovered {token_loss} missing token(s). Now has {recovered_seq_len} tokens")
+                                        else:
+                                            logger.warning(f"⚠️ TOKEN RECOVERY INCOMPLETE: Still {expected_final_seq - recovered_seq_len} tokens short")
+                            except Exception as e:
+                                logger.error(f"❌ TOKEN RECOVERY FAILED: {e}")
 
             # Cache status after generation
             if _cache_debug_enabled and pensieve_cache is not None:
