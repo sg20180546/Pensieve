@@ -226,7 +226,7 @@ class PensieveServer:
 
         # Get conversation history
         history = self._get_session_history(session_id)
-        # print("Penseive history",history)
+        print("Penseive history",history)
         # Encode input
         full_input = history + user_input
         input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
@@ -722,7 +722,7 @@ Active Sessions: {len(self.active_sessions)}
 
                 # Get conversation history
                 history = self._get_session_history(session_id)
-                print("Penesieve history",history)
+                # print("Penesieve history",history)
                 # Encode input
                 full_input = history + user_input
                 input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
