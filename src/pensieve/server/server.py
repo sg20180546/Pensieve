@@ -665,6 +665,60 @@ Active Sessions: {len(self.active_sessions)}
         self.batch_collection_thread.start()
         print("✓ Batch collection thread started")
 
+    def start_immediate_request_processing_thread(self):
+        """Start background thread for immediate request processing (vLLM mode).
+
+        This thread processes requests immediately without batching.
+        Each request is processed individually (stateless).
+
+        Call this once at server startup for vLLM baseline.
+        """
+        if self.batch_collection_running:
+            return
+
+        self.batch_collection_running = True
+        self.batch_collection_thread = threading.Thread(
+            target=self._immediate_request_processing_loop,
+            daemon=True,
+        )
+        self.batch_collection_thread.start()
+        print("✓ Immediate request processing thread started (vLLM stateless mode)")
+
+    def _immediate_request_processing_loop(self):
+        """Background loop for immediate request processing (no batching).
+
+        For vLLM baseline: process each request individually as it arrives.
+        """
+        while self.batch_collection_running:
+            try:
+                # Get single request (non-blocking check)
+                try:
+                    req_data = self.async_request_queue.get(timeout=0.01)
+                except:  # Queue.Empty
+                    continue
+
+                # Process immediately (stateless, no batching)
+                request_id = req_data['request_id']
+                session_id = req_data['session_id']
+                user_input = req_data['user_input']
+                max_new_tokens = req_data['max_new_tokens']
+
+                # Process synchronously (immediate execution)
+                response = self.process_request(
+                    session_id,
+                    user_input,
+                    max_new_tokens=max_new_tokens,
+                )
+
+                # Store result
+                with self.request_lock:
+                    self.request_results[request_id] = response
+
+            except Exception as e:
+                print(f"Error in immediate request processing loop: {e}")
+                import traceback
+                traceback.print_exc()
+
     def _batch_collection_loop(self):
         """Background loop for batch collection and execution."""
         while self.batch_collection_running:

@@ -311,7 +311,7 @@ def concurrent_client_worker_async(
     request_interval: float,
     results_queue: Queue,
 ) -> None:
-    """Simulate a single concurrent client using async request submission (non-blocking).
+    """Simulate a single concurrent client using async request submission (for Pensieve with batching).
 
     ✅ ASYNC VERSION: Submits requests without waiting for response.
     Benefits:
@@ -368,6 +368,66 @@ def concurrent_client_worker_async(
     results_queue.put({
         "client_id": client_id,
         "ttfts": [],  # TTFT measured at server level, collected via server.all_ttfts
+        "tail_latencies": tail_latencies,
+        "response_count": len(conversations),
+    })
+
+
+def concurrent_client_worker_vllm_async(
+    client_id: int,
+    server,
+    conversations: list,
+    request_interval: float,
+    results_queue: Queue,
+) -> None:
+    """Simulate a single concurrent client for vLLM using async submission (no batching).
+
+    ✅ ASYNC VERSION FOR vLLM: Submits requests but processes immediately (no batching).
+    Benefits:
+    - Same async pattern as Pensieve for fair comparison
+    - No unified batching (reflects vLLM's stateless nature)
+    - Measures actual vLLM performance without batching overhead
+
+    Args:
+        client_id: ID of this client
+        server: Inference server instance (vLLM)
+        conversations: List of conversation turns for this client
+        request_interval: Time to wait between requests (seconds)
+        results_queue: Thread-safe queue for collecting results
+    """
+    tail_latencies = []
+    session_id = f"session_{client_id}_{int(time.time() * 1000)}"
+
+    # Process each request with end-to-end timing (submit + retrieve)
+    for turn_idx, user_input in enumerate(conversations):
+        # Wait before sending next request
+        if turn_idx > 0:
+            time.sleep(request_interval)
+
+        try:
+            # Measure full async cycle: submit + retrieve
+            request_start = time.time()
+
+            # Submit async (returns immediately)
+            request_id = server.submit_request_async(
+                session_id,
+                user_input,
+                max_new_tokens=32,
+            )
+
+            # Retrieve result (blocking, but immediate since no batching)
+            response = server.get_request_result(request_id, timeout=30.0)
+            tail_latency = time.time() - request_start
+
+            if response:
+                tail_latencies.append(tail_latency)
+        except Exception as e:
+            print(f"Error in client {client_id} turn {turn_idx}: {e}")
+
+    # Put results in queue
+    results_queue.put({
+        "client_id": client_id,
+        "ttfts": [],  # TTFT measured at server level
         "tail_latencies": tail_latencies,
         "response_count": len(conversations),
     })
@@ -593,7 +653,13 @@ def run_concurrent_comparison(args):
     _ = vllm_server.tokenizer  # Trigger tokenizer loading
     print("✓ vLLM model pre-loaded successfully")
 
-    # ✅ Launch concurrent client threads with SAME access pattern (ASYNC for fair comparison)
+    # ✅ Start immediate request processing thread (no batching)
+    vllm_server.start_immediate_request_processing_thread()
+    print(f"✓ Immediate request processing started (no unified batching)")
+
+    # ✅ Launch concurrent client threads (ASYNC for vLLM, but no batching)
+    # Note: vLLM uses async submission but processes immediately (stateless, no unified batching)
+    # Fair comparison with Pensieve: same async pattern, different execution model
     vllm_results_queue = Queue()
     vllm_threads = []
 
@@ -602,7 +668,7 @@ def run_concurrent_comparison(args):
     for client_id in range(num_users):
         _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker_async,  # ✅ Use async version for fair comparison with Pensieve
+            target=concurrent_client_worker_vllm_async,  # ✅ Async version for vLLM (no batching)
             args=(
                 client_id,
                 vllm_server,
@@ -619,6 +685,11 @@ def run_concurrent_comparison(args):
         thread.join()
 
     vllm_total_time = time.time() - start_time
+
+    # ✅ Stop immediate request processing thread
+    vllm_server.batch_collection_running = False
+    if vllm_server.batch_collection_thread:
+        vllm_server.batch_collection_thread.join(timeout=1.0)
 
     # Aggregate results from all clients
     all_vllm_tail_latencies = []
