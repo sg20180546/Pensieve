@@ -479,6 +479,13 @@ def run_concurrent_comparison(args):
 
     print(f"✓ Pensieve server initialized (GPU memory allocated)")
 
+    # ✅ Pre-load model before concurrent access (fair comparison with vLLM)
+    print("Pre-loading Pensieve model before concurrent access...")
+    _ = pensieve_server.model      # Trigger model loading via property
+    _ = pensieve_server.tokenizer  # Trigger tokenizer loading
+    pensieve_server._get_worker()  # Initialize worker for Pensieve mode
+    print("✓ Pensieve model pre-loaded successfully")
+
     # ✅ Start batch collection thread for unified scheduling
     pensieve_server.start_batch_collection_thread()
     print(f"✓ Unified batch scheduler started (batch_timeout={pensieve_server.batch_timeout:.3f}s, max_batch_size={pensieve_server.max_batch_size})")
@@ -626,12 +633,7 @@ def run_concurrent_comparison(args):
     print(f"\n{vllm_stats}")
 
     # Calculate vLLM metrics
-    vllm_avg_ttft = mean(all_vllm_ttfts) if all_vllm_ttfts else 0
-    vllm_p99_ttft = (
-        sorted(all_vllm_ttfts)[int(len(all_vllm_ttfts) * 0.99)]
-        if all_vllm_ttfts
-        else 0
-    )
+    # Note: vLLM TTFT not calculated (blocking generate() cannot measure first token timing accurately)
     vllm_avg_tail = mean(all_vllm_tail_latencies) if all_vllm_tail_latencies else 0
     vllm_p99_tail = (
         sorted(all_vllm_tail_latencies)[int(len(all_vllm_tail_latencies) * 0.99)]
@@ -662,11 +664,10 @@ def run_concurrent_comparison(args):
     throughput_speedup = vllm_throughput / pensieve_throughput if pensieve_throughput > 0 else 0
     print(f"{'Throughput Speedup':<30} {throughput_speedup:.2f}x")
 
-    # TTFT comparison
-    print(f"\n{'Avg TTFT':<30} {pensieve_avg_ttft*1000:.1f}ms{'':<13} {vllm_avg_ttft*1000:.1f}ms")
-    print(f"{'P99 TTFT':<30} {pensieve_p99_ttft*1000:.1f}ms{'':<13} {vllm_p99_ttft*1000:.1f}ms")
-    ttft_speedup = vllm_avg_ttft / pensieve_avg_ttft if pensieve_avg_ttft > 0 else 0
-    print(f"{'TTFT Speedup (avg)':<30} {ttft_speedup:.2f}x")
+    # TTFT comparison (Note: vLLM TTFT cannot be measured accurately due to blocking generate())
+    print(f"\n{'Avg TTFT':<30} {pensieve_avg_ttft*1000:.1f}ms{'':<13} N/A (blocking)")
+    print(f"{'P99 TTFT':<30} {pensieve_p99_ttft*1000:.1f}ms{'':<13} N/A (blocking)")
+    print(f"{'TTFT Speedup (avg)':<30} N/A (vLLM blocking generate())")
 
     # Tail latency comparison
     print(f"\n{'Avg Tail Latency':<30} {pensieve_avg_tail*1000:.1f}ms{'':<13} {vllm_avg_tail*1000:.1f}ms")

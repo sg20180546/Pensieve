@@ -320,6 +320,7 @@ class PensieveServer:
             Generated text
         """
         request_id = f"{session_id}_{self.total_requests}"
+        start_time = time.time()
 
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = []
@@ -345,7 +346,6 @@ class PensieveServer:
         )
 
         # Time the entire process (simulating vLLM stateless processing)
-        start_time = time.time()
 
         with torch.no_grad():
             # Standard generation (no cache reuse)
@@ -386,8 +386,12 @@ class PensieveServer:
         # Store response in request for conversation history tracking
         request.response_text = response
 
-        # ✅ Store TTFT for vLLM baseline (entire generation time as conservative estimate)
-        self.last_ttft_per_request = {request_id: elapsed}
+        # Note: vLLM blocking generate() cannot measure TTFT accurately (first token timing lost)
+        # We measure tail latency instead (full generation time)
+        # TTFT comparison between Pensieve and vLLM is not applicable here due to architectural differences
+        # - Pensieve: measures TTFT from batch prefill (can interrupt after first token)
+        # - vLLM: blocking generate() completes all tokens before returning
+        self.last_ttft_per_request = {}  # Don't report TTFT for vLLM
 
         # Update statistics
         self.total_requests += 1
