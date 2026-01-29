@@ -782,7 +782,7 @@ def run_comparison(args):
 
     # Collect Pensieve statistics
     pensieve_stats = pensieve_server.get_statistics_str()
-    pensieve_total_time = pensieve_server.total_prefill_time
+    # Note: pensieve_total_time already calculated at line 518 (benchmark wall time)
     pensieve_requests = pensieve_server.total_requests
 
     print("\n" + pensieve_stats)
@@ -851,7 +851,7 @@ def run_comparison(args):
 
     # Collect vLLM statistics
     vllm_stats = vllm_server.get_statistics_str()
-    vllm_total_time = vllm_server.total_prefill_time
+    # Note: vllm_total_time already calculated at line 619 (benchmark wall time)
     vllm_requests = vllm_server.total_requests
 
     print("\n" + vllm_stats)
