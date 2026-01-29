@@ -705,8 +705,8 @@ class Worker:
             # DEBUG: Token counting verification
             input_len = len(req.input_ids) if req.input_ids.dim() > 0 else 1
             logger.debug(f"[Pensieve DEBUG FIXED] req_id={req.request_id}, req_idx={i}, input_len={input_len}, generated_tokens={len(generated_ids)}, response_len={len(response_text)}")
-            if len(generated_ids) > 20:
-                logger.debug(f"  First 20 tokens: {generated_ids[:20].tolist()}")
+            # if len(generated_ids) > 20:
+            #     logger.debug(f"  First 20 tokens: {generated_ids[:20].tolist()}")
 
             # Update request
             req.generated_tokens = generated_ids.tolist()
