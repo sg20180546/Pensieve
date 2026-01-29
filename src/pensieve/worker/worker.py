@@ -109,6 +109,22 @@ class Worker:
             # For other shapes, default to dim[1]
             return shape[1]
 
+    def _get_seq_dim_from_kv(self, kv_tensor: torch.Tensor) -> int:
+        """Get the dimension index where sequence length is located.
+
+        Returns:
+            Dimension index: 2 for Gemma format, 1 for standard format
+        """
+        if kv_tensor is None or len(kv_tensor.shape) < 4:
+            return 1  # Default
+
+        shape = kv_tensor.shape
+        # Heuristic: if dim[1] is small (num_heads typically 8-128), then dim=2 is seq
+        if shape[1] < 256:  # shape[1] is likely num_heads
+            return 2  # Gemma format: [batch, heads, seq, head_dim]
+        else:
+            return 1  # Standard format: [batch, seq, heads, head_dim]
+
     def execute_batch(
         self,
         batch: Batch,
@@ -998,9 +1014,17 @@ class Worker:
                     # Turn 2+: Store only newly generated tokens
                     new_tokens_start = total_seq_len - num_generated
 
-                # Extract tokens to store
-                new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
-                new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
+                # Extract tokens to store - use correct dimension based on tensor format
+                seq_dim = self._get_seq_dim_from_kv(k)
+
+                if seq_dim == 2:
+                    # Gemma format: [batch, heads, seq, head_dim]
+                    new_key = k[:, :, new_tokens_start:, :]  # [batch, heads, tokens_to_store, head_dim]
+                    new_value = v[:, :, new_tokens_start:, :]  # [batch, heads, tokens_to_store, head_dim]
+                else:
+                    # Standard format: [batch, seq, heads, head_dim]
+                    new_key = k[:, new_tokens_start:, :, :]  # [batch, tokens_to_store, heads, head_dim]
+                    new_value = v[:, new_tokens_start:, :, :]  # [batch, tokens_to_store, heads, head_dim]
 
                 # ✅ DEBUG for Turn 2+: Verify extracted token count
                 if existing_positions and layer_idx == 0:
@@ -1050,9 +1074,15 @@ class Worker:
                         logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
 
                     if last_chunk:
-                        # Extract tokens to fill last chunk (dim=2 is seq_len)
-                        fill_key = new_key[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
-                        fill_value = new_value[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
+                        # Extract tokens to fill last chunk (use correct dimension based on tensor format)
+                        if seq_dim == 2:
+                            # Gemma format: [batch, heads, seq, head_dim]
+                            fill_key = new_key[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
+                            fill_value = new_value[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
+                        else:
+                            # Standard format: [batch, seq, heads, head_dim]
+                            fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
+                            fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
 
                         # ✅ Move fill tensors to CPU to match last_chunk (which is stored in CPU)
                         fill_key = fill_key.cpu()
@@ -1067,12 +1097,12 @@ class Worker:
                         #         logger.error(f"❌ BATCH MISMATCH: {last_chunk.key_tensor.shape[0]} != {fill_key.shape[0]}")
                         #         logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
 
-                        # Concatenate with existing last chunk KV (concatenate along seq_len dimension)
+                        # Concatenate with existing last chunk KV (concatenate along correct seq_len dimension)
                         merged_key = torch.cat(
-                            [last_chunk.key_tensor, fill_key], dim=2
-                        )  # [batch, heads, last_chunk_size + fill_last, head_dim]
+                            [last_chunk.key_tensor, fill_key], dim=seq_dim
+                        )  # Concatenate along sequence dimension
                         merged_value = torch.cat(
-                            [last_chunk.value_tensor, fill_value], dim=2
+                            [last_chunk.value_tensor, fill_value], dim=seq_dim
                         )
 
                         # Update last chunk with merged KV
@@ -1101,8 +1131,15 @@ class Worker:
                             print(f"Warning: Failed to update last chunk {last_chunk_key}: {e}")
 
                 # ✅ Process remaining new tokens as full chunks
-                remaining_key = new_key[:, :, fill_last:, :]  # [batch, heads, remaining_new, head_dim]
-                remaining_value = new_value[:, :, fill_last:, :]
+                # Use correct dimension for tensor format
+                if seq_dim == 2:
+                    # Gemma format: [batch, heads, seq, head_dim]
+                    remaining_key = new_key[:, :, fill_last:, :]  # [batch, heads, remaining_new, head_dim]
+                    remaining_value = new_value[:, :, fill_last:, :]
+                else:
+                    # Standard format: [batch, seq, heads, head_dim]
+                    remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, head_dim]
+                    remaining_value = new_value[:, fill_last:, :, :]
 
                 if layer_idx == 0 and not existing_positions:
                     logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: remaining_key.shape={remaining_key.shape}, fill_last={fill_last}, remaining_new={remaining_new}")
@@ -1116,9 +1153,15 @@ class Worker:
                     if layer_idx == 0 and not existing_positions:
                         logger.debug(f"[DEBUG CHUNKS] chunk_idx={chunk_idx}: chunk_start={chunk_start}, chunk_end={chunk_end}, extracted_size={chunk_end - chunk_start}")
 
-                    # Extract chunk tokens (from seq_len dimension = dim=2)
-                    chunk_key = remaining_key[:, :, chunk_start:chunk_end, :]
-                    chunk_value = remaining_value[:, :, chunk_start:chunk_end, :]
+                    # Extract chunk tokens (from correct seq_len dimension)
+                    if seq_dim == 2:
+                        # Gemma format: seq at dim=2
+                        chunk_key = remaining_key[:, :, chunk_start:chunk_end, :]
+                        chunk_value = remaining_value[:, :, chunk_start:chunk_end, :]
+                    else:
+                        # Standard format: seq at dim=1
+                        chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
+                        chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
 
                     # Determine chunk_id
                     chunk_id = next_chunk_id + chunk_idx

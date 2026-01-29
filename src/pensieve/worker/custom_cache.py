@@ -478,7 +478,7 @@ class SimpleCacheWrapper:
         layer_idx: int,
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> None:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Update cache with new KV.
 
         Args:
@@ -487,8 +487,13 @@ class SimpleCacheWrapper:
             layer_idx: Which layer these tensors are from
             cache_position: Optional cache position tensor (newer HuggingFace versions)
             **kwargs: Additional arguments for compatibility with different HuggingFace versions
+
+        Returns:
+            Tuple of (key_states, value_states) for HuggingFace models to use
         """
         self._cache[layer_idx] = (key_states, value_states)
+        # Return the updated states (required by HuggingFace)
+        return key_states, value_states
 
     def reset(self) -> None:
         """Reset cache."""
