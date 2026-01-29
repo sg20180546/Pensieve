@@ -308,21 +308,26 @@ class PensieveServer:
 
         Hooks into model.forward() to distinguish:
         - Prefill: forward pass with past_key_values=None (input sequence)
-        - Decode: forward pass with past_key_values!=None (generated tokens)
+        - First token decode: first forward pass with past_key_values!=None (first generated token)
+        - Remaining decode: subsequent forward passes (remaining generated tokens)
 
         Args:
             input_ids: Input token IDs
             gen_kwargs: Arguments for model.generate()
 
         Returns:
-            Tuple of (outputs, prefill_time, decode_time)
+            Tuple of (outputs, prefill_time, first_token_time, remaining_decode_time)
         """
         from functools import wraps
 
         timing_data = {
             'prefill_time': 0.0,
+            'first_token_time': 0.0,
             'decode_time': 0.0,
         }
+
+        # Mutable counter to track decode calls
+        decode_call_count = [0]
 
         # Save original forward
         original_forward = self.model.forward
@@ -346,7 +351,14 @@ class PensieveServer:
                 timing_data['prefill_time'] += elapsed
             else:
                 # Decode: processing single token (with KV cache)
-                timing_data['decode_time'] += elapsed
+                decode_call_count[0] += 1
+
+                # First decode call = first token generation (TTFT = prefill + first_token_time)
+                if decode_call_count[0] == 1:
+                    timing_data['first_token_time'] = elapsed
+                else:
+                    # Remaining tokens
+                    timing_data['decode_time'] += elapsed
 
             return output
 
@@ -360,9 +372,8 @@ class PensieveServer:
         finally:
             # Restore original forward
             self.model.forward = original_forward
-        print(timing_data['prefill_time'])
-        print(timing_data['decode_time'])
-        return outputs, timing_data['prefill_time'], timing_data['decode_time']
+
+        return outputs, timing_data['prefill_time'], timing_data['first_token_time'], timing_data['decode_time']
 
     def _process_vllm_baseline(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
         """Process request using vLLM baseline (stateless).
@@ -435,11 +446,17 @@ class PensieveServer:
                 
                 
             # Use helper to measure prefill and decode time separately
-            outputs, prefill_time, decode_time = self._vllm_generate_with_timing(input_ids, gen_kwargs)
+            outputs, prefill_time, first_token_time, remaining_decode_time = self._vllm_generate_with_timing(input_ids, gen_kwargs)
 
-        # Accumulate measured prefill and decode times
+        # Calculate TTFT (Time to First Token) = prefill + first token generation
+        ttft = prefill_time + first_token_time
+
+        # Accumulate measured times
         self.total_prefill_time += prefill_time
-        self.total_generation_time += decode_time
+        self.total_generation_time += remaining_decode_time + first_token_time  # Total generation (first + remaining)
+
+        # Store TTFT for this request
+        self.last_ttft_per_request[request_id] = ttft
 
         # Decode output
         generated_ids = outputs.sequences[0][input_ids.shape[1]:]
