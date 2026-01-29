@@ -352,7 +352,7 @@ class Worker:
                 # print(input_cache.len())/
                 # print(input_cache.shape)
                 # print(input_cache)
-                print(input_cache)
+                # print(input_cache)
                 
                 # Forward pass - with session-specific cache
                 outputs = self.model(
