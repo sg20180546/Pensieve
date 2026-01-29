@@ -142,6 +142,12 @@ def main():
         default=5,
         help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
     )
+    parser.add_argument(
+        "--num_concurrent_users",
+        type=int,
+        default=3,
+        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
+    )
         
     args = parser.parse_args()
 
@@ -462,10 +468,10 @@ def run_concurrent_comparison(args):
 
     # Define conversations for each client
     # Using different conversation sets so clients have diverse workloads
-    if hasattr(args, '_dataset_conversations') and args._dataset_conversations:
+    if hasattr(args, 'client_conversations') and args.client_conversations:
         # Use ShareGPT conversations from dataset
-        client_conversations = args._dataset_conversations
-        print(f"✓ Using {len(client_conversations)} conversations from ShareGPT dataset")
+        client_conversations = args.client_conversations
+        print(f"✓ Using {len(client_conversations)} conversations from dataset")
     else:
         # Use hardcoded demo conversations (default)
         client_conversations = [
@@ -1039,8 +1045,8 @@ def run_dataset_evaluation(args):
         print(f"  Total user turns: {total_turns}")
         print(f"  Average turns per conversation: {avg_turns:.1f}")
 
-        # Inject dataset conversations into args
-        args._dataset_conversations = conversations
+        # Store loaded conversations in args for concurrent comparison
+        args.client_conversations = conversations
 
     # Run concurrent comparison with dataset (or fallback to demo)
     print("\n" + "=" * 60)
