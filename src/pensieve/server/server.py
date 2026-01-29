@@ -292,6 +292,7 @@ class PensieveServer:
 
             # Store TTFT (Time To First Token) from batch result if available
             if hasattr(batch_result, 'ttft_per_request') and batch_result.ttft_per_request:
+                print("pensieve internal ttft",batch_result.ttft_per_request)
                 self.last_ttft_per_request = batch_result.ttft_per_request
 
             # Store request in session
@@ -454,7 +455,7 @@ class PensieveServer:
 
         # Calculate TTFT (Time to First Token) = prefill + first token generation
         ttft = prefill_time + first_token_time
-
+        print("vllm internal ttft",ttft)
         # Accumulate measured times (thread-safe with lock)
         with self.request_lock:
             self.total_prefill_time += prefill_time
