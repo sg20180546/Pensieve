@@ -474,7 +474,7 @@ class PensieveServer:
         # TTFT comparison between Pensieve and vLLM is not applicable here due to architectural differences
         # - Pensieve: measures TTFT from batch prefill (can interrupt after first token)
         # - vLLM: blocking generate() completes all tokens before returning
-        self.last_ttft_per_request = {}  # Don't report TTFT for vLLM
+        # self.last_ttft_per_request = {}  # Don't report TTFT for vLLM
 
         # Update statistics
         self.total_requests += 1

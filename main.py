@@ -680,7 +680,7 @@ def run_concurrent_comparison(args):
     print(f"{'TTFT Speedup (avg)':<30} {ttft_speedup:.2f}x")
 
     # Tail latency comparison
-    print(f"\n{'Avg Tail Latency':<30} {pensieve_avg_tail*1000:.1f}ms{'':<13} {vllm_avg_tail*1000:.1f}ms")
+    print(f"\n{'Avg Latency':<30} {pensieve_avg_tail*1000:.1f}ms{'':<13} {vllm_avg_tail*1000:.1f}ms")
     print(f"{'P99 Tail Latency':<30} {pensieve_p99_tail*1000:.1f}ms{'':<13} {vllm_p99_tail*1000:.1f}ms")
     tail_speedup = vllm_avg_tail / pensieve_avg_tail if pensieve_avg_tail > 0 else 0
     print(f"{'Tail Latency Speedup':<30} {tail_speedup:.2f}x")
