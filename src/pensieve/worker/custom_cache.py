@@ -177,7 +177,41 @@ class PensieveCache(Cache):
         Returns:
             Total sequence length
         """
+        # If _seq_length hasn't been updated yet (before first __getitem__),
+        # calculate from actual cache chunks
+        if self._seq_length == 0:
+            return self.calculate_cached_seq_length()
         return self._seq_length
+
+    def calculate_cached_seq_length(self) -> int:
+        """Calculate cached sequence length from actual cache chunks.
+
+        This is used before __getitem__ is called in the forward pass,
+        so _seq_length hasn't been updated yet.
+
+        Returns:
+            Total sequence length from cache chunks
+        """
+        from pensieve.core.types import CHUNK_SIZE
+
+        max_tokens = 0
+        for request_id, request_info in self.batch_info.items():
+            positions = request_info.get('positions', [])  # chunk_ids
+            if positions:
+                max_chunk_id = max(positions)
+                # Find actual size of last chunk
+                for cache_dict in [self.cache_manager.gpu_cache,
+                                  self.cache_manager.cpu_cache]:
+                    for chunk in cache_dict.values():
+                        if (chunk.session_id == request_info.get('session_id') and
+                            chunk.chunk_id == max_chunk_id):
+                            # Total tokens = (max_chunk_id * CHUNK_SIZE) + tokens_in_last_chunk
+                            last_chunk_tokens = chunk.num_tokens
+                            total_tokens = (max_chunk_id * CHUNK_SIZE) + last_chunk_tokens
+                            max_tokens = max(max_tokens, total_tokens)
+                            break
+
+        return max_tokens
 
     def reset(self) -> None:
         """Reset cache for new forward pass."""
