@@ -328,9 +328,12 @@ class Worker:
                 # ✅ VERIFY PENSIEVE WORKING: Only log when Step 0 has cache from previous turns
                 # This proves multi-turn cache reuse is working (not same-turn cache)
                 # Step 0 + input_cache_len > 0 = cross-turn cache reuse (NEW TURN using previous cache)
-                if _cache_debug_enabled and step == 0 and input_cache_len > 0:
-                    # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
-                    logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
+                if _cache_debug_enabled and step == 0:
+                    # DEBUG: Check Step 0 state for ALL turns
+                    logger.debug(f"[DEBUG Step 0] {session_id}: cache={input_cache_len} tokens, input={input_seq_len} tokens, session_cache={session_cache is not None}")
+                    if input_cache_len > 0:
+                        # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
+                        logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
 
                 # Forward pass - with session-specific cache
                 outputs = self.model(
