@@ -325,13 +325,15 @@ class Worker:
                 
                 input_seq_len = step_input_ids.shape[1]  # Current input token count
 
-                # ✅ VERIFY PENSIEVE WORKING: Check that forward pass only processes new tokens
-                if _cache_debug_enabled and step == 0:
-                    # Prefill: entire prompt
-                    logger.debug(f"[Pensieve {session_id}] PREFILL: Forward input=[1, {input_seq_len}] (entire prompt)")
-                elif _cache_debug_enabled and step > 0 and input_cache_len > 0:
-                    # Generation with cache: only new token(s)
-                    logger.debug(f"[Pensieve {session_id}] GEN Step {step}: Forward input=[1, {input_seq_len}] + cached=[1, {input_cache_len}] (cache reuse working!)")
+                # ✅ VERIFY PENSIEVE WORKING: Only log when there's actual cache from previous turns
+                # This proves multi-turn cache reuse is working
+                if _cache_debug_enabled and input_cache_len > 0:
+                    if step == 0:
+                        # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
+                        logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
+                    else:
+                        # Generation continuing in same turn
+                        logger.debug(f"[Pensieve {session_id}] GEN Step {step}: Forward input=[1, {input_seq_len}] + cached=[1, {input_cache_len}]")
 
                 # Forward pass - with session-specific cache
                 outputs = self.model(
