@@ -240,7 +240,7 @@ class PensieveServer:
         )
 
         # Time prefill + generation
-        # start_time = time.time()
+
 
         try:
             # Phase 4 Pipeline: Scheduler → Worker
@@ -251,7 +251,7 @@ class PensieveServer:
             worker = self._get_worker()
             batch_result = worker.execute_batch(batch, cache_plan)
 
-            # elapsed = time.time() - start_time
+
             self.total_prefill_time += batch_result.prefill_time
 
             # Extract response from batch result
@@ -649,7 +649,8 @@ Active Sessions: {len(self.active_sessions)}
 
                 worker = self._get_worker()
                 batch_result = worker.execute_batch(batch, cache_plan)
-
+                print(batch_result.prefill_time)
+                print(batch_result)
                 # Store results with timing
                 with self.request_lock:
                     # ✅ Accumulate prefill and generation time separately
