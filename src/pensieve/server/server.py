@@ -208,7 +208,7 @@ class PensieveServer:
 
     def _process_pensieve(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
         """Process request using Pensieve (stateful with Phase 4 scheduler + worker).
-
+        
         Args:
             session_id: Session ID
             user_input: User input
@@ -217,6 +217,7 @@ class PensieveServer:
         Returns:
             Generated text
         """
+        print("@@@@ _process_pensieve do i called?")
         request_id = f"{session_id}_{self.total_requests}"
 
         # Get or create session
