@@ -154,25 +154,25 @@ class BatchScheduler:
             # Get all available positions (chunks) for this session
             positions = self.cache.get_session_positions(session_id)
 
-            # Check each position's chunk status
+            # Check each position and EACH LAYER's chunk status
             for pos in positions:
-                # For now, check layer 0 as representative
-                # (all layers at same position have similar availability)
-                chunk_key = f"{session_id}:chunk:{pos}:layer:0"
-                chunk = self.cache.get_chunk(chunk_key)
+                # ✅ Check all layers (each layer can have different availability)
+                for layer_idx in range(32):  # 32 layers in typical LLM
+                    chunk_key = f"{session_id}:chunk:{pos}:layer:{layer_idx}"
+                    chunk = self.cache.get_chunk(chunk_key)
 
-                if chunk is None:
-                    # Not found anywhere
-                    continue
+                    if chunk is None:
+                        # Not found anywhere
+                        continue
 
-                # ✅ Explicitly determine chunk location from chunk.location
-                # (get_chunk now returns DROPPED chunks too)
-                if chunk.location == CacheLocation.GPU:
-                    chunks_needed[chunk_key] = "GPU"
-                elif chunk.location == CacheLocation.CPU:
-                    chunks_needed[chunk_key] = "CPU"
-                elif chunk.location == CacheLocation.DROPPED:
-                    chunks_needed[chunk_key] = "DROPPED"
+                    # ✅ Explicitly determine chunk location from chunk.location
+                    # (get_chunk now returns DROPPED chunks too)
+                    if chunk.location == CacheLocation.GPU:
+                        chunks_needed[chunk_key] = "GPU"
+                    elif chunk.location == CacheLocation.CPU:
+                        chunks_needed[chunk_key] = "CPU"
+                    elif chunk.location == CacheLocation.DROPPED:
+                        chunks_needed[chunk_key] = "DROPPED"
 
         # 2. Plan swaps based on memory pressure
         stats = self.cache.get_statistics()
