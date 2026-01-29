@@ -73,17 +73,29 @@ class PensieveCache(Cache):
         import sys
         import traceback
 
-        # CRITICAL: Ensure this prints FIRST
+        # CRITICAL: Use FILE-BASED logging to bypass buffering issues
+        debug_file = "/tmp/pensieve_cache_debug.log"
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"\n========== [CACHE_DEBUG] __getitem__ START layer_idx={layer_idx} ==========\n")
+                f.write(f"batch_info keys: {list(self.batch_info.keys())}\n")
+                f.write(f"batch_info values: {self.batch_info}\n")
+                f.flush()
+        except Exception as e:
+            with open(debug_file, "a") as f:
+                f.write(f"ERROR in debug write: {e}\n")
+
+        # Also try stderr for redundancy
         try:
             print(f"\n========== [CACHE_DEBUG] __getitem__ START layer_idx={layer_idx} ==========", file=sys.stderr, flush=True)
             sys.stderr.flush()
         except Exception as e:
-            print(f"ERROR at line 73: {e}", file=sys.stderr, flush=True)
-            traceback.print_exc(file=sys.stderr)
+            pass
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
-            print(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached", file=sys.stderr, flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached\n")
             return self._layer_kv_cache[layer_idx]
 
         # Debug: Print cache state on first call (for visibility)
@@ -109,12 +121,15 @@ class PensieveCache(Cache):
         all_keys = []
         all_values = []
 
+        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            f.write(f"[CACHE_DEBUG] Starting primary path for layer_idx={layer_idx}\n")
+
         for request_id, request_info in self.batch_info.items():
             session_id = request_info.get('session_id')
             positions = request_info.get('positions', [])  # chunk_ids
 
-            if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Primary path: request_id={request_id}, session_id={session_id}, positions={positions}", flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Primary path: request_id={request_id}, session_id={session_id}, positions={positions}\n")
 
             # Gather chunks for this layer at all positions in order
             for position in sorted(positions):
@@ -128,22 +143,22 @@ class PensieveCache(Cache):
                             chunk.update_access_time()
                             all_keys.append(chunk.key_tensor)
                             all_values.append(chunk.value_tensor)
-                            if layer_idx == 0:
-                                print(f"[CACHE_DEBUG] Found in primary path: chunk({session_id}, {position}, {layer_idx})", flush=True)
+                            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                f.write(f"[CACHE_DEBUG] ✓ Found in primary path: chunk({session_id}, {position}, {layer_idx})\n")
                             break
 
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
         # This handles cases where chunk_keys wasn't populated in Request object
         if not all_keys:
-            if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Primary path found 0 chunks, triggering fallback scan...", flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Primary path found 0 chunks, triggering fallback scan for layer_idx={layer_idx}...\n")
 
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
-            if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Fallback: Looking for session_ids={session_ids}, layer_idx={layer_idx}", flush=True)
-                print(f"[CACHE_DEBUG] Available in cache: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)} chunks", flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Fallback: Looking for session_ids={session_ids}, layer_idx={layer_idx}\n")
+                f.write(f"[CACHE_DEBUG] Available in cache: GPU={len(self.cache_manager.gpu_cache)}, CPU={len(self.cache_manager.cpu_cache)} chunks\n")
 
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
@@ -151,15 +166,17 @@ class PensieveCache(Cache):
             for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
                 for chunk in cache_dict.values():
                     chunk_count += 1
-                    if layer_idx == 0 and chunk_count <= 3:
-                        print(f"[CACHE_DEBUG] Scanning chunk: session_id={chunk.session_id}, chunk_id={chunk.chunk_id}, layer_idx={chunk.layer_idx}, match={chunk.session_id in session_ids and chunk.layer_idx == layer_idx}", flush=True)
+                    if layer_idx == 0 and chunk_count <= 5:
+                        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                            f.write(f"[CACHE_DEBUG] Scanning chunk {chunk_count}: session_id={chunk.session_id}, chunk_id={chunk.chunk_id}, layer_idx={chunk.layer_idx}, matches_session={chunk.session_id in session_ids}, matches_layer={chunk.layer_idx == layer_idx}\n")
                     if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
                         key = (chunk.session_id, chunk.chunk_id)
                         found_chunks[key] = chunk
                         if layer_idx == 0:
-                            print(f"[CACHE_DEBUG] Found chunk in fallback: {key}", flush=True)
-            if layer_idx == 0:
-                print(f"[CACHE_DEBUG] Total chunks scanned: {chunk_count}, matched: {len(found_chunks)}", flush=True)
+                            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                                f.write(f"[CACHE_DEBUG] ✓ Found chunk in fallback: {key}\n")
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Fallback scan complete: Total chunks scanned={chunk_count}, matched={len(found_chunks)}\n")
 
             # Add chunks in order of chunk_id (grouped by session_id)
             for session_id in sorted(session_ids):
@@ -176,23 +193,31 @@ class PensieveCache(Cache):
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
         if all_keys:
-            print(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}", file=sys.stderr, flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Concatenating {len(all_keys)} KV pairs for layer_idx={layer_idx}\n")
             keys = torch.cat(all_keys, dim=1)  # Concatenate along sequence dimension
             values = torch.cat(all_values, dim=1)
-            print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
         else:
             # No cached KV for this layer, return empty tensors
             # Model will treat this as no past_key_values for this layer
-            print(f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors", file=sys.stderr, flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors\n")
+                f.write(f"all_keys length: {len(all_keys)}\n")
+                f.write(f"all_values length: {len(all_values)}\n")
+                f.write(f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
             keys = torch.empty(0, dtype=torch.float16)
             values = torch.empty(0, dtype=torch.float16)
-            print(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
+            with open("/tmp/pensieve_cache_debug.log", "a") as f:
+                f.write(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
         self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
 
-        print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}", file=sys.stderr, flush=True)
+        with open("/tmp/pensieve_cache_debug.log", "a") as f:
+            f.write(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
     def is_empty(self) -> bool:
