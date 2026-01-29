@@ -355,6 +355,12 @@ class Worker:
                 if _cache_debug_enabled and step == 0:
                     # DEBUG: Check Step 0 state for ALL turns
                     logger.debug(f"[DEBUG Step 0] {session_id}: cache={input_cache_len} tokens, input={input_seq_len} tokens, session_cache={session_cache is not None}")
+                    # ✅ DEBUG: Show batch_info positions to verify chunking
+                    if hasattr(input_cache, 'batch_info'):
+                        for info in input_cache.batch_info.values():
+                            if info.get('session_id') == session_id:
+                                positions = info.get('positions', [])
+                                logger.debug(f"[DEBUG] session_id={session_id}: batch_info positions={positions} (chunk count={len(positions)})")
                     if input_cache_len > 0:
                         # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
                         logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
