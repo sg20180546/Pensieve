@@ -2,6 +2,8 @@
 
 A simplified implementation of the Pensieve system from the EuroSys 2025 paper, demonstrating stateful LLM serving with multi-tier KV cache management for multi-turn conversations.
 
+Implemented by Sungjin Byeon(sg20180546)
+
 ## Overview
 
 **Problem**: Stateless LLM serving systems reprocess entire conversation history with each new request, causing redundant computation that grows with conversation length.
