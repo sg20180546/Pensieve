@@ -154,20 +154,24 @@ def test_cache_statistics():
     stats = cache.get_statistics()
 
     print(f"GPU Statistics:")
-    print(f"  - Total capacity: {stats.gpu_capacity_bytes / (1024**3):.2f} GB")
+    gpu_capacity = stats.gpu_used_bytes + stats.gpu_free_bytes
+    print(f"  - Total capacity: {gpu_capacity / (1024**3):.2f} GB")
     print(f"  - Used: {stats.gpu_used_bytes / (1024**2):.2f} MB")
     print(f"  - Free: {stats.gpu_free_bytes / (1024**2):.2f} MB")
-    print(f"  - Free ratio: {stats.gpu_free_ratio:.2%}")
+    print(f"  - Chunks: {stats.num_gpu_chunks}")
 
     print(f"\nCPU Statistics:")
-    print(f"  - Total capacity: {stats.cpu_capacity_bytes / (1024**3):.2f} GB")
+    cpu_capacity = stats.cpu_used_bytes + stats.cpu_free_bytes
+    print(f"  - Total capacity: {cpu_capacity / (1024**3):.2f} GB")
     print(f"  - Used: {stats.cpu_used_bytes / (1024**2):.2f} MB")
     print(f"  - Free: {stats.cpu_free_bytes / (1024**2):.2f} MB")
-    print(f"  - Free ratio: {stats.cpu_free_ratio:.2%}")
+    print(f"  - Chunks: {stats.num_cpu_chunks}")
 
-    print(f"\nSession Statistics:")
-    print(f"  - Active sessions: {stats.num_sessions}")
-    print(f"  - Total chunks: {stats.total_chunks}")
+    print(f"\nCache Hit Statistics:")
+    print(f"  - GPU hits: {stats.gpu_hit_count}")
+    print(f"  - CPU hits: {stats.cpu_hit_count}")
+    print(f"  - Misses: {stats.miss_count}")
+    print(f"  - GPU hit rate: {stats.gpu_hit_rate:.2%}")
 
     assert stats.gpu_used_bytes > 0, "❌ GPU usage not tracked!"
     assert stats.total_chunks >= 3, "❌ Chunk count incorrect!"
