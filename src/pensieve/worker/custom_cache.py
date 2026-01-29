@@ -268,7 +268,7 @@ class PensieveCache(Cache):
         if keys.numel() == 0:
             print(f"!!! CRITICAL: Layer {layer_idx} is returning an EMPTY tensor!")
             # 여기서 강제로 에러를 내면 traceback에 __getitem__이 찍힙니다.
-            # raise ValueError("Empty KV Cache detected")
+            raise ValueError("Empty KV Cache detected")
         print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
         return keys, values
 
