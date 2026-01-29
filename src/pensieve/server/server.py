@@ -320,7 +320,7 @@ class PensieveServer:
         Returns:
             Tuple of (outputs, prefill_time, first_token_time, remaining_decode_time)
         """
-        from functools import wraps
+        import types
 
         timing_data = {
             'prefill_time': 0.0,
@@ -334,18 +334,20 @@ class PensieveServer:
         # Save original forward
         original_forward = self.model.forward
 
-        @wraps(original_forward)
-        def timed_forward(*args, input_ids=None, past_key_values=None, attention_mask=None, **kwargs):
+        def timed_forward(model_self, *args, **kwargs):
+            """Hooked forward method that measures timing."""
             start = time.time()
-            # Call original forward
-            output = original_forward(
-                input_ids=input_ids,
-                past_key_values=past_key_values,
-                attention_mask=attention_mask,
-                *args,
-                **kwargs
-            )
+            # Call original forward (already bound to model instance)
+            output = original_forward(*args, **kwargs)
             elapsed = time.time() - start
+
+            # Check if KV cache was used (distinguish prefill vs decode)
+            # past_key_values will be in kwargs or args
+            past_key_values = kwargs.get('past_key_values', None)
+
+            # If not in kwargs, check positional args (usually position 2)
+            if past_key_values is None and len(args) > 2:
+                past_key_values = args[2]
 
             # Classify as prefill or decode based on KV cache state
             if past_key_values is None:
@@ -355,7 +357,7 @@ class PensieveServer:
                 # Decode: processing single token (with KV cache)
                 decode_call_count[0] += 1
 
-                # First decode call = first token generation (TTFT = prefill + first_token_time)
+                # First decode call = first token generation
                 if decode_call_count[0] == 1:
                     timing_data['first_token_time'] = elapsed
                 else:
@@ -365,8 +367,8 @@ class PensieveServer:
             return output
 
         try:
-            # Hook the forward method
-            self.model.forward = timed_forward
+            # Hook the forward method properly (binding self)
+            self.model.forward = types.MethodType(timed_forward, self.model)
 
             # Call generate (will trigger our hooked forward)
             outputs = self.model.generate(input_ids, **gen_kwargs)
@@ -374,8 +376,7 @@ class PensieveServer:
         finally:
             # Restore original forward
             self.model.forward = original_forward
-        print(timing_data['first_token_time']+timing_data['prefill_time'])
-        print(timing_data['prefill_time'])
+
         return outputs, timing_data['prefill_time'], timing_data['first_token_time'], timing_data['decode_time']
 
     def _process_vllm_baseline(self, session_id: str, user_input: str, max_new_tokens: int) -> str:
