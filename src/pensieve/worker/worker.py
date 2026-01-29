@@ -269,10 +269,14 @@ class Worker:
                 if hasattr(pensieve_cache, 'is_empty') and pensieve_cache.is_empty():
                     # Cache is empty, pass None to model (will compute new KV)
                     session_cache = None
+                    if _cache_debug_enabled:
+                        logger.debug(f"[DEBUG] {session_id}: pensieve_cache.is_empty()=True → session_cache=None")
                 else:
                     # Cache has chunks, pass full PensieveCache
                     # (it will filter to only this session's chunks)
                     session_cache = pensieve_cache
+                    if _cache_debug_enabled:
+                        logger.debug(f"[DEBUG] {session_id}: pensieve_cache has chunks → session_cache=PensieveCache")
             except Exception as e:
                 logger.warning(f"Failed to get session cache for {session_id}: {e}")
                 session_cache = None
