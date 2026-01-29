@@ -325,6 +325,14 @@ class Worker:
                 
                 input_seq_len = step_input_ids.shape[1]  # Current input token count
 
+                # ✅ VERIFY PENSIEVE WORKING: Check that forward pass only processes new tokens
+                if _cache_debug_enabled and step == 0:
+                    # Prefill: entire prompt
+                    logger.debug(f"[Pensieve {session_id}] PREFILL: Forward input=[1, {input_seq_len}] (entire prompt)")
+                elif _cache_debug_enabled and step > 0 and input_cache_len > 0:
+                    # Generation with cache: only new token(s)
+                    logger.debug(f"[Pensieve {session_id}] GEN Step {step}: Forward input=[1, {input_seq_len}] + cached=[1, {input_cache_len}] (cache reuse working!)")
+
                 # Forward pass - with session-specific cache
                 outputs = self.model(
                     step_input_ids,
