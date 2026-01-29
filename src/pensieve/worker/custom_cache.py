@@ -137,13 +137,19 @@ class PensieveCache(Cache):
 
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
+            chunk_count = 0
             for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
                 for chunk in cache_dict.values():
+                    chunk_count += 1
+                    if layer_idx == 0 and chunk_count <= 3:
+                        print(f"[CACHE_DEBUG] Scanning chunk: session_id={chunk.session_id}, chunk_id={chunk.chunk_id}, layer_idx={chunk.layer_idx}, match={chunk.session_id in session_ids and chunk.layer_idx == layer_idx}", flush=True)
                     if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
                         key = (chunk.session_id, chunk.chunk_id)
                         found_chunks[key] = chunk
                         if layer_idx == 0:
                             print(f"[CACHE_DEBUG] Found chunk in fallback: {key}", flush=True)
+            if layer_idx == 0:
+                print(f"[CACHE_DEBUG] Total chunks scanned: {chunk_count}, matched: {len(found_chunks)}", flush=True)
 
             # Add chunks in order of chunk_id (grouped by session_id)
             for session_id in sorted(session_ids):
