@@ -653,9 +653,10 @@ Active Sessions: {len(self.active_sessions)}
                 # print(batch_result)
                 # Store results with timing
                 with self.request_lock:
-                    print("@@@@@. sj")
+                    # print("@@@@@. sj")
                     # ✅ Accumulate prefill and generation time separately
                     self.total_prefill_time += batch_result.prefill_time
+                    print( self.total_prefill_time)
                     self.total_generation_time += batch_result.generation_time
 
                     for req in requests:
