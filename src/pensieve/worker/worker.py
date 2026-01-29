@@ -369,13 +369,15 @@ class Worker:
                     # print(f"  [EOS reached at step {step}]")
                     break
 
-            # ✅ Store final KV for this session (with request index for batch extraction)
-            final_past_kv_per_session[session_id] = (req_idx, session_past_kv)
+            # ✅ Store final KV for this session (already per-session, no req_idx needed)
+            # CRITICAL: session_past_kv is already [1, num_heads, seq, head_dim] from per-session processing
+            # Do NOT store req_idx - it will cause batch extraction issues when req_idx > 0
+            final_past_kv_per_session[session_id] = session_past_kv
             # ✅ DEBUG: Confirm tuple packing
             if session_past_kv and len(session_past_kv) > 0:
                 first_k, first_v = session_past_kv[0]
                 if first_k is not None:
-                    logger.debug(f"_custom_generate] Packed session_id={session_id}, req_idx={req_idx}, kv[0].shape={first_k.shape}")
+                    logger.debug(f"_custom_generate] Packed session_id={session_id}, kv[0].shape={first_k.shape}")
 
         # Reconstruct sequences
         all_sequences = []
@@ -600,42 +602,18 @@ class Worker:
                 # past_key_values is now a dict: {session_id: (req_idx, final_past_kv)}
                 past_kv_dict = outputs.past_key_values
                 if isinstance(past_kv_dict, dict):
-                    # Per-session KV storage with batch extraction
-                    for session_id, kv_data in past_kv_dict.items():
-                        if isinstance(kv_data, tuple) and len(kv_data) == 2:
-                            # Unpack (req_idx, session_kv)
-                            req_idx, session_kv = kv_data
-                            logger.debug(f"_process_outputs] session_id={session_id}, req_idx={req_idx}, kv_data is tuple")
-                            if session_kv:
-                                # ✅ Extract only this request's KV (batch_size=1)
-                                # session_kv is tuple of (k, v) for each layer
-                                # Each k, v has shape [batch, num_heads, seq_len, head_dim]
-                                # Extract k[req_idx:req_idx+1, ...], v[req_idx:req_idx+1, ...]
+                    # Per-session KV storage (no batch extraction needed - already per-session)
+                    for session_id, session_kv in past_kv_dict.items():
+                        if session_kv:
+                            # ✅ FIXED: session_kv is already [1, num_heads, seq, head_dim] from per-session processing
+                            # Do NOT slice by req_idx - it's already per-session!
+                            # DEBUG: Print first layer shape
+                            first_k, _ = session_kv[0]
+                            if first_k is not None:
+                                logger.debug(f"_process_outputs] session_id={session_id}, kv[0].shape={first_k.shape} (already per-session, batch_size={first_k.shape[0]})")
 
-                                # ✅ DEBUG: Check raw session_kv before extraction (Scenario 2)
-                                raw_k, raw_v = session_kv[0]
-                                logger.debug(f"_process_outputs] Before extraction: raw_k.shape={raw_k.shape if raw_k is not None else None}, raw_v.shape={raw_v.shape if raw_v is not None else None}, req_idx={req_idx}")
-
-                                session_kv_single = tuple(
-                                    (
-                                        k[req_idx:req_idx+1, ...] if k is not None else None,
-                                        v[req_idx:req_idx+1, ...] if v is not None else None,
-                                    )
-                                    for k, v in session_kv
-                                )
-                                # ✅ DEBUG: Print first layer shape after extraction
-                                first_k, first_v = session_kv_single[0]
-                                if first_k is not None:
-                                    logger.debug(f"_process_outputs] After extraction: first_k.shape={first_k.shape}, first_v.shape={first_v.shape}")
-                                    if first_k.shape[0] == 0:
-                                        logger.error(f"❌ ERROR: After extraction batch size is 0!")
-                                        logger.error(f"   raw_k.shape={raw_k.shape}, req_idx={req_idx}")
-                                        logger.error(f"   This is SCENARIO 2: Batch extraction mismatch")
-                                self._store_new_kv_chunks(batch, session_kv_single, session_id)
-                        else:
-                            # Fallback: assume it's direct KV
-                            logger.debug(f"_process_outputs] session_id={session_id}, kv_data is NOT tuple (type={type(kv_data)}), using fallback")
-                            self._store_new_kv_chunks(batch, kv_data, session_id)
+                            # Store directly without slicing
+                            self._store_new_kv_chunks(batch, session_kv, session_id)
                 else:
                     # Fallback for old code path (shouldn't happen now)
                     self._store_new_kv_chunks(batch, past_kv_dict)
