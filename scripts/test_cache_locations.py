@@ -174,7 +174,8 @@ def test_cache_statistics():
     print(f"  - GPU hit rate: {stats.gpu_hit_rate:.2%}")
 
     assert stats.gpu_used_bytes > 0, "❌ GPU usage not tracked!"
-    assert stats.total_chunks >= 3, "❌ Chunk count incorrect!"
+    total_chunks = stats.num_gpu_chunks + stats.num_cpu_chunks + stats.num_dropped_chunks
+    assert total_chunks >= 3, "❌ Chunk count incorrect!"
     print("\n✅ Cache statistics test PASSED\n")
 
 
