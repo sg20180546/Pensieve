@@ -7,6 +7,10 @@ import torch
 import time
 
 
+# Global constant for KV cache chunking
+CHUNK_SIZE = 32  # Tokens per chunk
+
+
 class CacheLocation(Enum):
     """Location of KV cache."""
     GPU = "gpu"
@@ -45,7 +49,7 @@ class SessionMetadata:
     @property
     def total_chunks(self) -> int:
         """전체 청크 개수 (32개 토큰 = 1청크)"""
-        return (self.total_tokens + 31) // 32
+        return (self.total_tokens + CHUNK_SIZE - 1) // CHUNK_SIZE
 
     @property
     def last_chunk_size(self) -> int:
@@ -56,10 +60,10 @@ class SessionMetadata:
         - 128개 토큰 → 4개 청크, 마지막은 32개 (정확히 나누어떨어짐)
 
         Returns:
-            1-32 사이의 정수
+            1-CHUNK_SIZE 사이의 정수
         """
-        remainder = self.total_tokens % 32
-        return remainder if remainder > 0 else 32
+        remainder = self.total_tokens % CHUNK_SIZE
+        return remainder if remainder > 0 else CHUNK_SIZE
 
     def update_last_accessed(self) -> None:
         """마지막 접근 시간 업데이트"""

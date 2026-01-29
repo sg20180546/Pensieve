@@ -252,10 +252,13 @@ class Worker:
             # ✅ DEBUG: Check batch extraction (Scenario 2)
             # logger.debug(f"_custom_generate] Session {session_id}: req_input_ids.shape={req_input_ids.shape}, req_attention_mask.shape={req_attention_mask.shape}")
 
-            # Get cached KV for this session (if available in pensieve_cache)
-            # KEY: Only pass cache to model if it has data
-            # - If empty: pass None (HF computes new KV)
-            # - If has chunks: pass PensieveCache (HF uses cached KV)
+            # Get cached KV for this session
+            # ✅ PensieveCache handles session-specific chunk gathering internally
+            # KEY: Pass PensieveCache to model for all sessions in batch
+            # PensieveCache.__getitem__(layer_idx) automatically:
+            # - Filters chunks by session_id (only returns this session's chunks)
+            # - Concatenates chunks from all positions for the layer
+            # - Returns [batch_size, seq_len, num_heads, head_dim] KV tensors
             session_cache = None
             try:
                 # Check if pensieve_cache has any cached chunks
@@ -263,13 +266,11 @@ class Worker:
                     # Cache is empty, pass None to model (will compute new KV)
                     session_cache = None
                 else:
-                    # Cache has chunks, use it
-                    if hasattr(pensieve_cache, 'get_session_cache'):
-                        session_cache = pensieve_cache.get_session_cache(session_id)
-                    else:
-                        # Fallback: use full pensieve_cache for first step
-                        session_cache = pensieve_cache
-            except Exception:
+                    # Cache has chunks, pass full PensieveCache
+                    # (it will filter to only this session's chunks)
+                    session_cache = pensieve_cache
+            except Exception as e:
+                logger.warning(f"Failed to get session cache for {session_id}: {e}")
                 session_cache = None
 
             # Generation loop for this session only
@@ -317,7 +318,7 @@ class Worker:
                     input_cache_len = input_cache[0][0].shape[2]  # sequence_length dimension
                 else:
                     input_cache_len = 0
-
+                
                 input_seq_len = step_input_ids.shape[1]  # Current input token count
 
                 # Forward pass - with session-specific cache
