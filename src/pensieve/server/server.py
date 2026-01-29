@@ -251,8 +251,10 @@ class PensieveServer:
             worker = self._get_worker()
             batch_result = worker.execute_batch(batch, cache_plan)
 
-
-            self.total_prefill_time += batch_result.prefill_time
+            # Accumulate timing metrics (thread-safe with lock)
+            with self.request_lock:
+                self.total_prefill_time += batch_result.prefill_time
+                self.total_generation_time += batch_result.generation_time
 
             # Extract response from batch result
             if request_id in batch_result.request_results:
@@ -451,14 +453,13 @@ class PensieveServer:
 
         # Calculate TTFT (Time to First Token) = prefill + first token generation
         ttft = prefill_time + first_token_time
-        print("sj ttft",ttft)
-        print("sj self.total_generation_time ",self.total_generation_time)
-        # Accumulate measured times
-        self.total_prefill_time += prefill_time
-        self.total_generation_time += remaining_decode_time + first_token_time  # Total generation (first + remaining)
 
-        # Store TTFT for this request
-        self.last_ttft_per_request[request_id] = ttft
+        # Accumulate measured times (thread-safe with lock)
+        with self.request_lock:
+            self.total_prefill_time += prefill_time
+            self.total_generation_time += remaining_decode_time + first_token_time  # Total generation (first + remaining)
+            # Store TTFT for this request
+            self.last_ttft_per_request[request_id] = ttft
 
         # Decode output
         generated_ids = outputs.sequences[0][input_ids.shape[1]:]
@@ -569,6 +570,8 @@ Total Requests: {self.total_requests}
 Total Tokens Generated: {self.total_tokens_generated}
 Avg Prefill Time: {self.total_prefill_time / max(self.total_requests, 1):.3f}s
 Total Prefill Time: {self.total_prefill_time:.3f}s
+Avg Generation Time: {self.total_generation_time / max(self.total_requests, 1):.3f}s
+Total Generation Time: {self.total_generation_time:.3f}s
 Active Sessions: {len(self.active_sessions)}
 """
 
