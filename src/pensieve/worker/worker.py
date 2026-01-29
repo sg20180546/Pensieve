@@ -819,15 +819,16 @@ class Worker:
             remaining_to_fill_last = 0 if last_chunk_id == -1 else (chunk_size - last_chunk_size)
 
             # Split new tokens: some fill last chunk, rest create new chunks
+            # Note: tokens_to_store will be calculated below after we extract KV tensors
             if remaining_to_fill_last > 0 and num_generated > 0:
                 # How many new tokens can fill the last chunk?
                 fill_last = min(remaining_to_fill_last, num_generated)
-                remaining_new = num_generated - fill_last  # After filling last chunk
+                remaining_new = num_generated - fill_last  # After filling last chunk (will be recalculated below)
                 next_chunk_id = last_chunk_id + 1  # Next new chunk after last_chunk_id
             else:
                 # Last chunk doesn't exist or is already full
                 fill_last = 0
-                remaining_new = num_generated
+                remaining_new = num_generated  # Will be recalculated below for Turn 1
                 next_chunk_id = last_chunk_id + 1 if last_chunk_id >= 0 else 0
 
             # ✅ Calculate actual context_length considering metadata
@@ -861,11 +862,30 @@ class Worker:
 
                 # Calculate where new tokens start
                 total_seq_len = k.shape[2]  # Total sequence length (dim=2)
-                new_tokens_start = total_seq_len - num_generated
 
-                # Extract ONLY new tokens
-                new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
-                new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, num_generated, head_dim]
+                # ✅ CRITICAL FIX: On Turn 1 (no existing chunks), store ALL tokens, not just generated
+                # Turn 1: existing_positions=[] → store everything (input + generated)
+                # Turn 2+: existing_positions=[...] → store only newly generated
+                if not existing_positions:
+                    # Turn 1: Store ALL tokens from the beginning
+                    new_tokens_start = 0
+                else:
+                    # Turn 2+: Store only newly generated tokens
+                    new_tokens_start = total_seq_len - num_generated
+
+                # Extract tokens to store
+                new_key = k[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
+                new_value = v[:, :, new_tokens_start:, :]  # [batch, num_heads, tokens_to_store, head_dim]
+
+                # ✅ RECALCULATE remaining_new for Turn 1 case
+                if not existing_positions:
+                    # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
+                    tokens_stored = new_key.shape[2]  # Actual tokens in extracted tensor
+                    if layer_idx == 0:  # Only recalculate once per request
+                        remaining_new = tokens_stored - fill_last
+                        # Update total_tokens to reflect actual stored tokens
+                        total_tokens = tokens_stored
+                        total_chunks = (total_tokens + chunk_size - 1) // chunk_size
 
                 # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
                 # if layer_idx == 0:
