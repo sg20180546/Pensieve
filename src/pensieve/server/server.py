@@ -649,10 +649,11 @@ Active Sessions: {len(self.active_sessions)}
 
                 worker = self._get_worker()
                 batch_result = worker.execute_batch(batch, cache_plan)
-                print(batch_result.prefill_time)
-                print(batch_result)
+                # print(batch_result.prefill_time)
+                # print(batch_result)
                 # Store results with timing
                 with self.request_lock:
+                    print("@@@@@. sj")
                     # ✅ Accumulate prefill and generation time separately
                     self.total_prefill_time += batch_result.prefill_time
                     self.total_generation_time += batch_result.generation_time
