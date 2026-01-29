@@ -236,16 +236,27 @@ class PensieveServer:
         # Get conversation history
         history = self._get_session_history(session_id)
         print("Penseive history",history)
-        # Encode input
-        full_input = history + user_input
-        input_ids = self.tokenizer.encode(full_input, return_tensors='pt')
-        input_ids = input_ids.squeeze(0)
 
         # ✅ CRITICAL FIX: Retrieve chunk_keys from cache for multi-turn reuse
         # On Turn 2+, the cache has chunks from previous turns stored in session_chunks
         chunk_keys = []
         if session_id in self.cache.session_chunks:
             chunk_keys = self.cache.session_chunks[session_id][:]  # Copy the list
+
+        # ✅ NEW FIX: Encode only NEW input for Turn 2+
+        # Turn 1: history is empty, so encode history + user_input (just user_input)
+        # Turn 2+: cache handles history, so encode ONLY user_input
+        # if chunk_keys:
+        #     # Turn 2+: We have cached KV from previous turns
+        #     # Only encode the NEW user input (model will use cache for history)
+        #     input_to_encode = user_input
+        # else:
+        #     # Turn 1: No cache yet, encode full conversation (history is empty on Turn 1)
+        #     input_to_encode = history + user_input
+        input_to_encode =user_input
+        # Encode input
+        input_ids = self.tokenizer.encode(input_to_encode, return_tensors='pt')
+        input_ids = input_ids.squeeze(0)
 
         # Create request for unified batching pipeline
         request = Request(
