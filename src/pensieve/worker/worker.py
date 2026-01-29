@@ -117,8 +117,10 @@ class Worker:
 
         try:
             # 2. Execute cache swaps (including recovery)
+            prefill_start = time.time()
             self._execute_cache_plan(cache_plan, batch)
-
+            prefill_end = time.time()
+            prefill_time_elapsed = prefill_end - prefill_start
             # 3. Prepare batch inputs
             input_ids, attention_mask = self._prepare_batch_inputs(batch)
 
@@ -149,11 +151,22 @@ class Worker:
                     # Return empty result on error
                     return BatchResult(batch_id=batch.batch_id)
 
+            # ⏱️ Separate prefill and generation timing
+            # Prefill was measured above: cache plan execution only
+            # Generation: remaining time in _custom_generate (first forward + token loop)
+            total_end = time.time()
+            total_elapsed = total_end - start_time
+
+            # prefill_time_elapsed was already calculated at line 123 (cache plan only)
+            # Generation time is the rest
+            generation_time_elapsed = total_elapsed - prefill_time_elapsed
+
             # 6. Extract generated tokens and store new KV chunks
             results = self._process_outputs(batch, outputs)
 
-            elapsed = time.time() - start_time
-            results.execution_time = elapsed
+            results.execution_time = total_elapsed
+            results.prefill_time = prefill_time_elapsed
+            results.generation_time = generation_time_elapsed
 
             # Store TTFT (Time To First Token) per request if available
             if hasattr(outputs, 'ttft') and outputs.ttft:

@@ -650,8 +650,12 @@ Active Sessions: {len(self.active_sessions)}
                 worker = self._get_worker()
                 batch_result = worker.execute_batch(batch, cache_plan)
 
-                # Store results
+                # Store results with timing
                 with self.request_lock:
+                    # ✅ Accumulate prefill and generation time separately
+                    self.total_prefill_time += batch_result.prefill_time
+                    self.total_generation_time += batch_result.generation_time
+
                     for req in requests:
                         request_id = req.request_id
                         session_id = req.session_id

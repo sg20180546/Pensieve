@@ -233,6 +233,8 @@ class BatchResult:
     generated_tokens: List[int] = field(default_factory=list)  # All generated tokens
     execution_time: float = 0.0  # Total execution time (tail latency)
     ttft_per_request: Dict[str, float] = field(default_factory=dict)  # {request_id: ttft in seconds}
+    prefill_time: float = 0.0  # Time for prefill (cache plan + first forward pass)
+    generation_time: float = 0.0  # Time for token generation (decode loop)
 
 
 @dataclass
