@@ -71,12 +71,6 @@ class PensieveCache(DynamicCache):
         all_keys = []
         all_values = []
 
-        # ✅ DEBUG: Log batch_info at start
-        if layer_idx == 0:
-            print(f"\n[PensieveCache.__getitem__] layer_idx={layer_idx}, batch_info keys={list(self.batch_info.keys())}", flush=True)
-            for req_id, info in self.batch_info.items():
-                print(f"  {req_id}: session={info.get('session_id')}, positions={info.get('positions', [])}", flush=True)
-
         for request_info in self.batch_info.values():
             session_id = request_info.get('session_id')
             positions = request_info.get('positions', [])  # chunk_ids
@@ -106,12 +100,6 @@ class PensieveCache(DynamicCache):
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
-            if layer_idx == 0:
-                print(f"[PensieveCache.__getitem__] PRIMARY path found 0 chunks! Triggering fallback...", flush=True)
-                print(f"  Looking for session_ids={session_ids}, layer_idx={layer_idx}", flush=True)
-                print(f"  GPU cache has {len(self.cache_manager.gpu_cache)} chunks", flush=True)
-                print(f"  CPU cache has {len(self.cache_manager.cpu_cache)} chunks", flush=True)
-
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
             for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
@@ -133,9 +121,6 @@ class PensieveCache(DynamicCache):
 
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
-        if layer_idx == 0:
-            print(f"[PensieveCache.__getitem__] Found {len(all_keys)} chunks for layer_idx={layer_idx}", flush=True)
-
         if all_keys:
             # ✅ CRITICAL: Detect actual tensor shape to concatenate at correct dimension
             # Gemma-2 uses [batch, heads, seq, head_dim]
