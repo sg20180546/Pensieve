@@ -330,7 +330,6 @@ def concurrent_client_worker_async(
     request_interval: float,
     results_queue: Queue,
     max_new_tokens: int = 256,
-    record_sequences: dict = None,
 ) -> None:
     """Simulate a single concurrent client using async request submission (for Pensieve with batching).
 
@@ -346,8 +345,6 @@ def concurrent_client_worker_async(
         conversations: List of conversation turns for this client
         request_interval: Time to wait between requests (seconds)
         results_queue: Thread-safe queue for collecting results
-        max_new_tokens: Maximum tokens to generate
-        record_sequences: Optional dict to record query sequences for replay (for Pensieve phase)
     """
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
@@ -358,12 +355,6 @@ def concurrent_client_worker_async(
         # Wait before sending next request
         if turn_idx > 0:
             time.sleep(request_interval)
-
-        # Record the query sequence if requested (Pensieve phase)
-        if record_sequences is not None:
-            if client_id not in record_sequences:
-                record_sequences[client_id] = []
-            record_sequences[client_id].append(user_input)
 
         # Record submission time
         submit_start = time.time()
@@ -460,81 +451,6 @@ def concurrent_client_worker_vllm_async(
         "ttfts": [],  # TTFT measured at server level
         "tail_latencies": tail_latencies,
         "response_count": len(conversations),
-    })
-
-
-def concurrent_client_worker_replay_sequences(
-    client_id: int,
-    server,
-    request_sequences: dict,
-    request_interval: float,
-    results_queue: Queue,
-    max_new_tokens: int = 256,
-) -> None:
-    """Replay recorded request sequences from Pensieve phase on vLLM (for fair comparison).
-
-    ✅ REPLAY VERSION FOR vLLM: Uses pre-recorded query sequences from Pensieve phase.
-    Benefits:
-    - Ensures both Pensieve and vLLM process identical queries
-    - Makes performance comparison fair (only difference is cache strategy)
-    - Validates that both systems produce same output
-
-    Args:
-        client_id: ID of this client
-        server: Inference server instance (vLLM)
-        request_sequences: Dict mapping client_id -> list of query strings
-        request_interval: Time to wait between requests (seconds)
-        results_queue: Thread-safe queue for collecting results
-        max_new_tokens: Maximum tokens to generate
-    """
-    tail_latencies = []
-    session_id = f"session_{client_id}_{int(time.time() * 1000)}"
-
-    # Replay the recorded sequence for this client
-    if client_id not in request_sequences:
-        print(f"Warning: No recorded sequence for client {client_id}")
-        results_queue.put({
-            "client_id": client_id,
-            "ttfts": [],
-            "tail_latencies": [],
-            "response_count": 0,
-        })
-        return
-
-    recorded_queries = request_sequences[client_id]
-
-    # Process each recorded query with end-to-end timing (submit + retrieve)
-    for turn_idx, user_input in enumerate(recorded_queries):
-        # Wait before sending next request
-        if turn_idx > 0:
-            time.sleep(request_interval)
-
-        try:
-            # Measure full async cycle: submit + retrieve
-            request_start = time.time()
-
-            # Submit async (returns immediately)
-            request_id = server.submit_request_async(
-                session_id,
-                user_input,
-                max_new_tokens=max_new_tokens,
-            )
-
-            # Retrieve result (blocking, but immediate since no batching)
-            response = server.get_request_result(request_id, timeout=30.0)
-            tail_latency = time.time() - request_start
-
-            if response:
-                tail_latencies.append(tail_latency)
-        except Exception as e:
-            print(f"Error in client {client_id} turn {turn_idx}: {e}")
-
-    # Put results in queue
-    results_queue.put({
-        "client_id": client_id,
-        "ttfts": [],  # TTFT measured at server level
-        "tail_latencies": tail_latencies,
-        "response_count": len(recorded_queries),
     })
 
 
@@ -655,9 +571,6 @@ def run_concurrent_comparison(args):
     pensieve_server.start_batch_collection_thread()
     print(f"✓ Unified batch scheduler started (batch_timeout={pensieve_server.batch_timeout:.3f}s, max_batch_size={pensieve_server.max_batch_size})")
 
-    # ✅ Request sequence recording for deterministic replay
-    request_sequences = {}  # Dict[client_id] -> List[query_strings]
-
     # Launch concurrent client threads (using async submission)
     pensieve_results_queue = Queue()
     pensieve_threads = []
@@ -667,7 +580,7 @@ def run_concurrent_comparison(args):
     for client_id in range(num_users):
         _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker_async,  # ✅ Use async version with recording
+            target=concurrent_client_worker,  # ✅ Use blocking version for fair comparison
             args=(
                 client_id,
                 pensieve_server,
@@ -676,7 +589,6 @@ def run_concurrent_comparison(args):
                 pensieve_results_queue,
                 args.max_new_tokens,  # Pass max_new_tokens from CLI args
             ),
-            kwargs={"record_sequences": request_sequences},  # Record queries for replay
         )
         thread.start()
         pensieve_threads.append(thread)
@@ -767,25 +679,22 @@ def run_concurrent_comparison(args):
     vllm_server.start_immediate_request_processing_thread()
     print(f"✓ Immediate request processing started (no unified batching)")
 
-    # ✅ Launch concurrent client threads with REPLAY of recorded sequences
+    # ✅ Launch concurrent client threads (ASYNC for vLLM, but no batching)
     # Note: vLLM uses async submission but processes immediately (stateless, no unified batching)
-    # Fair comparison with Pensieve: same query sequences, different execution model
+    # Fair comparison with Pensieve: same async pattern, different execution model
     vllm_results_queue = Queue()
     vllm_threads = []
-
-    print(f"\n✓ Replaying {len(request_sequences)} recorded request sequences from Pensieve phase")
-    for client_id in request_sequences:
-        print(f"  Client {client_id}: {len(request_sequences[client_id])} queries recorded")
 
     start_time = time.time()
 
     for client_id in range(num_users):
+        _, conversations = client_conversations[client_id]
         thread = threading.Thread(
-            target=concurrent_client_worker_replay_sequences,  # ✅ Replay recorded sequences
+            target=concurrent_client_worker,  # ✅ Use blocking version for fair comparison
             args=(
                 client_id,
                 vllm_server,
-                request_sequences,
+                conversations,
                 client_intervals[client_id],  # Use same client-specific interval
                 vllm_results_queue,
                 args.max_new_tokens,  # Pass max_new_tokens from CLI args
