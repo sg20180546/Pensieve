@@ -513,13 +513,10 @@ class Worker:
                         # PensieveCache object
                         input_cache_len = input_cache.get_seq_length()
                     else:
-                        # Standard HuggingFace cache (tuple of tuples after to_legacy_cache conversion)
-                        # input_cache is [(k0, v0), (k1, v1), ..., (k31, v31)]
+                        # Standard HuggingFace cache (DynamicCache or tuple of tuples)
                         try:
-                            first_layer_kv = input_cache[0]  # Get first layer tuple (k, v)
-                            first_k = first_layer_kv[0]      # Get k tensor from first layer
-                            input_cache_len = self._get_seq_len_from_kv(first_k)
-                        except (TypeError, IndexError, AttributeError):
+                            input_cache_len = self._get_seq_len_from_kv(input_cache[0][0])
+                        except (TypeError, IndexError):
                             input_cache_len = 0
                 else:
                     input_cache_len = 0
@@ -593,21 +590,11 @@ class Worker:
                 #             raise
 
                 # Forward pass - with session-specific cache
-                # ✅ CRITICAL: Convert tuple back to DynamicCache format for model
-                # We stored as tuple for layer 0-31 processing, but model expects DynamicCache
-                model_input_cache = input_cache
-                if isinstance(input_cache, tuple) and not hasattr(input_cache, '__getitem__'):
-                    # Tuple of tuples → needs to be passed as-is to model (HF handles it)
-                    model_input_cache = input_cache
-                elif isinstance(input_cache, tuple) and len(input_cache) > 0 and isinstance(input_cache[0], tuple):
-                    # Tuple of (k, v) tuples - model can handle this directly
-                    model_input_cache = input_cache
-
                 # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
-                    past_key_values=model_input_cache,
+                    past_key_values=input_cache,
                     use_cache=True,
                     return_dict=True,
                 )
@@ -641,13 +628,30 @@ class Worker:
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
 
-                # ✅ CRITICAL FIX: Convert HuggingFace DynamicCache to legacy tuple format
-                # Recent HuggingFace versions return DynamicCache instead of tuple of tuples
-                # DynamicCache.__iter__ may not enumerate all layers correctly (layer 0 often skipped)
-                # Solution: convert to legacy format which is tuple of (k, v) per layer
-                if hasattr(session_past_kv, 'to_legacy_cache'):
-                    print("to_legacy_cache!!@@@@@!$3249523u958y2385")
-                    session_past_kv = session_past_kv.to_legacy_cache()
+                # 🔴 DEBUG: Inspect layer 0 immediately after extraction
+                if True:  # Only on first step of first session
+                    print(f"\n{'='*80}")
+                    print(f"🔴 [LAYER 0 INSPECTION] session_id={session_id}, step={step}")
+                    print(f"{'='*80}")
+                    print(f"Type of session_past_kv: {type(session_past_kv)}")
+                    print(f"Length of session_past_kv: {len(session_past_kv) if hasattr(session_past_kv, '__len__') else 'N/A'}")
+
+                    if len(session_past_kv) > 0:
+                        print(f"\nAccessing layer 0:")
+                        try:
+                            layer_0 = session_past_kv[0]
+                            print(f"  Type: {type(layer_0)}")
+
+                            if isinstance(layer_0, tuple) and len(layer_0) >= 2:
+                                k0, v0 = layer_0[0], layer_0[1]
+                                print(f"  k0: type={type(k0)}, shape={k0.shape if k0 is not None else 'None'}, is_none={k0 is None}")
+                                print(f"  v0: type={type(v0)}, shape={v0.shape if v0 is not None else 'None'}, is_none={v0 is None}")
+                            else:
+                                print(f"  ⚠️ Layer 0 is not a tuple or doesn't have (k,v): {layer_0}")
+                        except Exception as e:
+                            print(f"  ❌ Error accessing layer 0: {e}")
+
+                    print(f"{'='*80}\n")
 
                 # ✅ DEBUG: Track KV cache shape at each step to find where token is lost
                 # if session_past_kv and len(session_past_kv) > 0:
