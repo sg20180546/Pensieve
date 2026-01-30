@@ -628,15 +628,23 @@ class Worker:
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
 
+                # ✅ CRITICAL FIX: Convert HuggingFace DynamicCache to legacy tuple format
+                # Recent HuggingFace versions return DynamicCache instead of tuple of tuples
+                # DynamicCache.__iter__ may not enumerate all layers correctly (layer 0 often skipped)
+                # Solution: convert to legacy format which is tuple of (k, v) per layer
+                if hasattr(session_past_kv, 'to_legacy_cache'):
+                    print("to_legacy_cache!!@@@@@!$3249523u958y2385")
+                    session_past_kv = session_past_kv.to_legacy_cache()
+
                 # ✅ DEBUG: Track KV cache shape at each step to find where token is lost
-                if session_past_kv and len(session_past_kv) > 0:
-                    first_k, first_v = session_past_kv[0]
-                    if first_k is not None:
-                        kv_seq_len = self._get_seq_len_from_kv(first_k)
-                        if step == 0:
-                            logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
-                        elif step % 5 == 0 or step == max_new_tokens - 1:  # Log every 5 steps and last step
-                            logger.debug(f"[KV TRACKING] {session_id} Step {step}: generated_so_far={step}, model_kv_seq_len={kv_seq_len}")
+                # if session_past_kv and len(session_past_kv) > 0:
+                #     first_k, first_v = session_past_kv[0]
+                #     if first_k is not None:
+                #         kv_seq_len = self._get_seq_len_from_kv(first_k)
+                #         if step == 0:
+                #             logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
+                #         elif step % 5 == 0 or step == max_new_tokens - 1:  # Log every 5 steps and last step
+                #             logger.debug(f"[KV TRACKING] {session_id} Step {step}: generated_so_far={step}, model_kv_seq_len={kv_seq_len}")
 
                 # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
                 # if step == 0 and session_past_kv:
@@ -734,15 +742,15 @@ class Worker:
                                 logger.error(f"❌ TOKEN RECOVERY FAILED: {e}")
 
             # Cache status after generation
-            if _cache_debug_enabled and pensieve_cache is not None:
-                try:
-                    stats = pensieve_cache.get_statistics()
-                    logger.debug(f"  Cache after session: GPU={stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB) | "
-                                f"CPU={stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB) | "
-                                f"Drops={stats.num_dropped_chunks} | "
-                                f"GPU hits={stats.gpu_hit_count}, CPU hits={stats.cpu_hit_count}, Misses={stats.miss_count}")
-                except Exception as e:
-                    logger.debug(f"  (Could not get cache stats: {e})")
+            # if _cache_debug_enabled and pensieve_cache is not None:
+            #     try:
+            #         stats = pensieve_cache.get_statistics()
+            #         logger.debug(f"  Cache after session: GPU={stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB) | "
+            #                     f"CPU={stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB) | "
+            #                     f"Drops={stats.num_dropped_chunks} | "
+            #                     f"GPU hits={stats.gpu_hit_count}, CPU hits={stats.cpu_hit_count}, Misses={stats.miss_count}")
+            #     except Exception as e:
+            #         logger.debug(f"  (Could not get cache stats: {e})")
 
             # ✅ Store final KV for this session (already per-session, no req_idx needed)
             # CRITICAL: session_past_kv is already [1, num_heads, seq, head_dim] from per-session processing
@@ -755,24 +763,24 @@ class Worker:
             #         logger.debug(f"_custom_generate] Packed session_id={session_id}, kv[0].shape={first_k.shape}")
 
         # ✅ BATCH SUMMARY: Multi-token generation overview
-        if _cache_debug_enabled:
-            total_generated = sum(len(ids) for ids in generated_ids)
-            avg_tokens = total_generated / batch_size if batch_size > 0 else 0
-            logger.debug(f"\n[BATCH GENERATION COMPLETE]")
-            logger.debug(f"  Batch size: {batch_size} sessions")
-            logger.debug(f"  Total tokens generated: {total_generated}")
-            logger.debug(f"  Average tokens per session: {avg_tokens:.1f}")
-            if pensieve_cache is not None:
-                try:
-                    stats = pensieve_cache.get_statistics()
-                    logger.debug(f"  Final Cache State:")
-                    logger.debug(f"    GPU: {stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB)")
-                    logger.debug(f"    CPU: {stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB)")
-                    logger.debug(f"    Dropped: {stats.num_dropped_chunks} chunks")
-                    logger.debug(f"    Hit Rate: GPU={stats.gpu_hit_rate:.1%} CPU={stats.cpu_hit_rate:.1%} Misses={stats.miss_rate:.1%}")
-                except Exception as e:
-                    logger.debug(f"    (Could not get stats: {e})")
-            logger.debug("")
+        # if _cache_debug_enabled:
+        #     total_generated = sum(len(ids) for ids in generated_ids)
+        #     avg_tokens = total_generated / batch_size if batch_size > 0 else 0
+        #     logger.debug(f"\n[BATCH GENERATION COMPLETE]")
+        #     logger.debug(f"  Batch size: {batch_size} sessions")
+        #     logger.debug(f"  Total tokens generated: {total_generated}")
+        #     logger.debug(f"  Average tokens per session: {avg_tokens:.1f}")
+        #     if pensieve_cache is not None:
+        #         try:
+        #             stats = pensieve_cache.get_statistics()
+        #             logger.debug(f"  Final Cache State:")
+        #             logger.debug(f"    GPU: {stats.num_gpu_chunks} chunks ({stats.gpu_used_bytes/(1024**2):.1f}MB)")
+        #             logger.debug(f"    CPU: {stats.num_cpu_chunks} chunks ({stats.cpu_used_bytes/(1024**2):.1f}MB)")
+        #             logger.debug(f"    Dropped: {stats.num_dropped_chunks} chunks")
+        #             logger.debug(f"    Hit Rate: GPU={stats.gpu_hit_rate:.1%} CPU={stats.cpu_hit_rate:.1%} Misses={stats.miss_rate:.1%}")
+        #         except Exception as e:
+        #             logger.debug(f"    (Could not get stats: {e})")
+        #     logger.debug("")
 
         # Reconstruct sequences
         all_sequences = []
@@ -786,10 +794,10 @@ class Worker:
                 ]
             )
             req = batch.requests[i]
-            if _cache_debug_enabled:
-                logger.debug(f"[SEQ {i}] req_id={req.request_id}, input={len(input_ids[i])}, generated={len(generated_ids[i])}, total={len(full_seq)}")
-            else:
-                logger.debug(f"[_custom_generate SUMMARY] req_id={req.request_id}, input_len={len(input_ids[i])}, generated_len={len(generated_ids[i])}, total_len={len(full_seq)}, max_allowed={max_new_tokens}")
+            # if _cache_debug_enabled:
+            #     logger.debug(f"[SEQ {i}] req_id={req.request_id}, input={len(input_ids[i])}, generated={len(generated_ids[i])}, total={len(full_seq)}")
+            # else:
+            #     logger.debug(f"[_custom_generate SUMMARY] req_id={req.request_id}, input_len={len(input_ids[i])}, generated_len={len(generated_ids[i])}, total_len={len(full_seq)}, max_allowed={max_new_tokens}")
             all_sequences.append(full_seq)
 
         # Pad to same length
@@ -1238,7 +1246,7 @@ class Worker:
                     # Get last chunk to update it
                     last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
                     last_chunk = self.cache.get_chunk(last_chunk_key)
-
+                    
                     if layer_idx == 0:
                         logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
 
