@@ -1041,7 +1041,7 @@ class Worker:
         target_session_id: str = None,  # ✅ NEW: Store only this session's KV
     ) -> None:
         """Store newly generated KV chunks in cache with last chunk merge.
-
+        
         ✅ CRITICAL: Handles incomplete last chunks correctly!
 
         Process:
@@ -1146,7 +1146,7 @@ class Worker:
             for layer_idx, (k, v) in enumerate(past_key_values):
                 if k is None or v is None:
                     continue
-
+                print("sj @@@@ layer_idx",layer_idx)
                 # ✅ DEBUG: Print actual shapes to diagnose mismatch
                 if layer_idx == 0:
                     # logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
