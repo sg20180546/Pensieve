@@ -596,59 +596,6 @@ class Worker:
                 #             raise
 
                 # Forward pass - with session-specific cache
-                # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
-
-                # ✅ DEBUG FORWARD INPUT: Log what we're passing to model
-                if step == 0 or (step > 0 and input_cache is not None):
-                    logger.debug(f"[PRE-FORWARD] Session {session_id}, Step {step}: step_input_ids.shape={step_input_ids.shape}, input_cache={'None' if input_cache is None else 'Present'}")
-
-                # 🔴 PRE-FORWARD CACHE VALIDATION: Find malformed chunks before model execution
-                if step == 0 and input_cache is not None and hasattr(input_cache, 'cache_manager'):
-                    print("\n" + "="*80, flush=True)
-                    print("[PRE-FORWARD CACHE VALIDATION] Inspecting all cached chunks...", flush=True)
-                    print("="*80, flush=True)
-
-                    gpu_cache = input_cache.cache_manager.gpu_cache
-                    cpu_cache = input_cache.cache_manager.cpu_cache
-                    malformed_chunks = []
-
-                    for cache_dict_name, cache_dict in [("GPU", gpu_cache), ("CPU", cpu_cache)]:
-                        for key, chunk in cache_dict.items():
-                            if chunk.key_tensor is None or chunk.value_tensor is None:
-                                malformed_chunks.append({
-                                    'layer': chunk.layer_idx,
-                                    'chunk': chunk.chunk_id,
-                                    'session': chunk.session_id,
-                                    'loc': cache_dict_name,
-                                    'issue': 'KV is None'
-                                })
-                            elif chunk.key_tensor.shape[-1] == 0:
-                                malformed_chunks.append({
-                                    'layer': chunk.layer_idx,
-                                    'chunk': chunk.chunk_id,
-                                    'session': chunk.session_id,
-                                    'loc': cache_dict_name,
-                                    'issue': f'key head_dim=0, k.shape={chunk.key_tensor.shape}'
-                                })
-                            elif chunk.value_tensor.shape[-1] == 0:
-                                malformed_chunks.append({
-                                    'layer': chunk.layer_idx,
-                                    'chunk': chunk.chunk_id,
-                                    'session': chunk.session_id,
-                                    'loc': cache_dict_name,
-                                    'issue': f'value head_dim=0, v.shape={chunk.value_tensor.shape}'
-                                })
-
-                    if malformed_chunks:
-                        print(f"\n❌ FOUND {len(malformed_chunks)} MALFORMED CHUNKS:\n", flush=True)
-                        for c in malformed_chunks:
-                            print(f"  Layer {c['layer']}, Chunk {c['chunk']} (Session {c['session']}, {c['loc']}): {c['issue']}", flush=True)
-                        print()
-                    else:
-                        total = len(gpu_cache) + len(cpu_cache)
-                        print(f"✅ All {total} chunks valid (GPU: {len(gpu_cache)}, CPU: {len(cpu_cache)})", flush=True)
-                    print("="*80 + "\n", flush=True)
-
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
@@ -657,96 +604,12 @@ class Worker:
                     return_dict=True,
                 )
 
-                # Check output KV cache (what the model produced)
-                if outputs.past_key_values is not None and len(outputs.past_key_values) > 0:
-                    output_cache_len = self._get_seq_len_from_kv(outputs.past_key_values[0][0])
-                    output_k_shape = outputs.past_key_values[0][0].shape if outputs.past_key_values[0][0] is not None else None
-                else:
-                    output_cache_len = 0
-                    output_k_shape = None
-
-                # Expected: input_cache_len + input_seq_len = output_cache_len
-                expected_len = input_cache_len + input_seq_len
-
-                # ✅ DEBUG: Log model output details
-                logger.debug(f"[POST-FORWARD] Session {session_id}, Step {step}: output_k.shape={output_k_shape}, output_cache_len={output_cache_len}, expected={expected_len}")
-
-                # ✅ DEBUG OUTPUT: Track KV cache growth (only when cache exists - multi-turn scenario)
-                # Skip: Step 0 (prefill) and first turn of any session (input_cache_len = 0)
-                # Log: Step 1+ where cache is being reused (input_cache_len > 0)
-                # if _cache_debug_enabled and step > 0 and input_cache_len > 0:
-                #     cache_reuse_pct = 100 * input_cache_len / expected_len
-                #     logger.debug(f"[Step {step}] Session {session_id}: {input_cache_len}↓ cached + {input_seq_len} new → {output_cache_len} total ({cache_reuse_pct:.1f}% reuse)")
-
-                # ✅ CORRECTNESS CHECK: Ensure no duplication
-                # if output_cache_len != expected_len:
-                    # logger.error(f"❌ KV CACHE MISMATCH! Expected {expected_len}, got {output_cache_len}")
-                    # logger.error(f"   This indicates cache duplication or incorrect accumulation!")
-
-                # ✅ WARNING: If cache exists but input_seq_len > 1, possible duplication
-                # if input_cache_len > 0 and input_seq_len > 1:
-                #     logger.warning(f"⚠️ Cache exists ({input_cache_len}), but input has {input_seq_len} tokens. Possible duplication?")
-
                 # Extract outputs
                 logits = outputs.logits
                 session_past_kv = outputs.past_key_values
 
-                # 🔴 DEBUG: Inspect layer 0 immediately after extraction
-                # if True:  # Only on first step of first session
-                    
-                #     print(f"\n{'='*80}")
-                #     print("@@@@ STEP ",step)
-                #     print(f"🔴 [LAYER 0 INSPECTION] session_id={session_id}, step={step}")
-                #     print(f"{'='*80}")
-                #     print(f"Type of session_past_kv: {type(session_past_kv)}")
-                #     print(f"Length of session_past_kv: {len(session_past_kv) if hasattr(session_past_kv, '__len__') else 'N/A'}")
-
-                #     if len(session_past_kv) > 0:
-                #         print(f"\nAccessing layer 0:")
-                #         try:
-                #             layer_0 = session_past_kv[0]
-                #             print(f"  Type: {type(layer_0)}")
-
-                #             if isinstance(layer_0, tuple) and len(layer_0) >= 2:
-                #                 k0, v0 = layer_0[0], layer_0[1]
-                #                 print(f"  k0: type={type(k0)}, shape={k0.shape if k0 is not None else 'None'}, is_none={k0 is None}")
-                #                 print(f"  v0: type={type(v0)}, shape={v0.shape if v0 is not None else 'None'}, is_none={v0 is None}")
-                #             else:
-                #                 print(f"  ⚠️ Layer 0 is not a tuple or doesn't have (k,v): {layer_0}")
-                #         except Exception as e:
-                #             print(f"  ❌ Error accessing layer 0: {e}")
-
-                #     print(f"{'='*80}\n")
-
-                # ✅ DEBUG: Track KV cache shape at each step to find where token is lost
-                # if session_past_kv and len(session_past_kv) > 0:
-                #     first_k, first_v = session_past_kv[0]
-                #     if first_k is not None:
-                #         kv_seq_len = self._get_seq_len_from_kv(first_k)
-                #         if step == 0:
-                #             logger.debug(f"[KV TRACKING] {session_id} Step {step}: input_len={step_input_ids.shape[1]}, model_kv_seq_len={kv_seq_len}, first_k.shape={first_k.shape}")
-                #         elif step % 5 == 0 or step == max_new_tokens - 1:  # Log every 5 steps and last step
-                #             logger.debug(f"[KV TRACKING] {session_id} Step {step}: generated_so_far={step}, model_kv_seq_len={kv_seq_len}")
-
-                # ✅ DEBUG: Check model KV output (Scenario 1, 2, 3)
-                # if step == 0 and session_past_kv:
-                #     first_k, first_v = session_past_kv[0]
-                #     if first_k is not None:
-                #         logger.debug(f"_custom_generate] After forward step {step}: first_k.shape={first_k.shape} (batch={first_k.shape[0]})")
-                #         logger.debug(f"_custom_generate] dtype: first_k={first_k.dtype}, first_v={first_v.dtype}")
-                #         if first_k.shape[0] == 0:
-                #             logger.error(f"❌ ERROR: KV batch size is 0! Input was [1, {step_input_ids.shape[1]}]")
-                #             logger.error(f"   step_input_ids.shape={step_input_ids.shape}, logits.shape={logits.shape}")
-
                 # Get next token logits
                 next_token_logits = logits[:, -1, :]  # [1, vocab_size]
-
-                # DEBUG: Check top-5 predictions
-                # if step <= 1:
-                #     top_k = 5
-                #     _, top_indices = torch.topk(next_token_logits, top_k, dim=-1)
-                #     top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
-                #     print(f"  [Step {step}] Top-5 predictions: {list(zip(top_indices[0].tolist(), top_tokens))}")
 
                 # ✅ Token selection: GREEDY DECODING (deterministic)
                 # Paper requirement: "Output matches a stateless baseline (vLLM)"
@@ -763,11 +626,6 @@ class Worker:
                 # Store generated token
                 token_id = next_token_ids.item()
                 generated_ids[req_idx].append(token_id)
-
-                # Debug: Print generated tokens
-                # if step < 3:  # Only print first 3 tokens for debugging
-                #     token_str = self.tokenizer.decode([token_id])
-                #     print(f"  [Step {step}] Selected Token ID: {token_id}, Token: '{token_str}'")
 
                 # Check for EOS
                 if token_id == eos_token_id:
