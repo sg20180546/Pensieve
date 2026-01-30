@@ -34,6 +34,8 @@ if _debug_enabled or _cache_debug_enabled:
         logger.addHandler(handler)
 else:
     logger.setLevel(logging.WARNING)
+    # Remove all handlers to suppress any debug output
+    logger.handlers.clear()
 
 
 class Worker:
