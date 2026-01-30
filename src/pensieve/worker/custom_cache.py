@@ -303,21 +303,43 @@ class PensieveCache(Cache):
                 seq_dim = 1
 
             print(f"[CACHE_DEBUG] Detected tensor format: dim={sample_key.dim()}, shape={sample_key.shape}, concat_at_dim={seq_dim}\n")
+
+            # ✅ VALIDATION: Before concatenation, verify all chunks have compatible shapes
+            print(f"[CACHE_DEBUG] Validating {len(all_keys)} chunks before concatenation:")
+            for idx, (k, v) in enumerate(zip(all_keys, all_values)):
+                print(f"  Chunk {idx}: k.shape={k.shape}, v.shape={v.shape}, device={k.device}")
+                if k.shape[-1] == 0:
+                    print(f"    ❌ ERROR: Chunk {idx} has head_dim=0!")
+                    raise ValueError(f"Chunk {idx} has malformed tensor: {k.shape}")
+                if k.device.type != 'cuda':
+                    print(f"    ⚠️ WARNING: Chunk {idx} is not on CUDA: {k.device}")
+
             keys = torch.cat(all_keys, dim=seq_dim)  # Concatenate along detected sequence dimension
             values = torch.cat(all_values, dim=seq_dim)
             print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
+
+            # ✅ VALIDATION: After concatenation, verify result is valid
+            if keys.shape[-1] == 0:
+                print(f"❌ CRITICAL: Concatenated keys has head_dim=0! Shape: {keys.shape}")
+                print(f"   This suggests one of the chunks has head_dim=0")
+                raise ValueError(f"Concatenation resulted in head_dim=0: {keys.shape}")
+            if keys.numel() == 0:
+                print(f"❌ CRITICAL: Concatenated keys is empty! Shape: {keys.shape}")
+                raise ValueError(f"Concatenation resulted in empty tensor: {keys.shape}")
         else:
-            # No cached KV for this layer, return empty tensors
-            # Model will treat this as no past_key_values for this layer
+            # No cached KV for this layer
             msg = (f"[CACHE_DEBUG] !!!WARNING!!! No KV pairs found for layer_idx={layer_idx}, returning EMPTY tensors\n"
                    f"all_keys length: {len(all_keys)}\n"
                    f"all_values length: {len(all_values)}\n"
                    f"session_ids from batch_info: {set(info.get('session_id') for info in self.batch_info.values())}\n")
             print(msg)
-            keys = torch.empty(0, dtype=torch.float16)
-            values = torch.empty(0, dtype=torch.float16)
-            print("[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
-            # print(f"[CACHE_DEBUG] Empty tensors: keys.shape={keys.shape}, values.shape={values.shape}\n")
+
+            # ✅ CRITICAL FIX: Return None for both k and v to signal "no cache"
+            # HuggingFace models handle (None, None) correctly as "compute new KV"
+            # Don't return empty tensors - they cause shape mismatches in attention!
+            keys = None
+            values = None
+            print(f"[CACHE_DEBUG] No chunks found, returning (None, None) for layer {layer_idx}\n")
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)

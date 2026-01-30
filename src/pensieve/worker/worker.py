@@ -552,6 +552,35 @@ class Worker:
                     print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
                     print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
 
+                    # ✅ VALIDATION: If using PensieveCache, verify chunks exist and have correct shapes
+                    if input_cache is not None and hasattr(input_cache, 'cache_manager'):
+                        print(f"\n🔍 [CACHE VALIDATION] Verifying PensieveCache contents before forward pass:", flush=True)
+                        try:
+                            # For each layer, verify we can fetch valid chunks
+                            for layer_idx in range(min(self.num_layers, 2)):  # Check first 2 layers
+                                print(f"\n  Layer {layer_idx}:", flush=True)
+                                try:
+                                    # Try to get KV for this layer (calls __getitem__)
+                                    k, v = input_cache[layer_idx]
+                                    print(f"    ✅ Retrieved: k.shape={k.shape}, v.shape={v.shape}, device={k.device}", flush=True)
+
+                                    # Validate shapes
+                                    if k.numel() == 0:
+                                        logger.warning(f"⚠️ Layer {layer_idx} KV is EMPTY!")
+                                    if len(k.shape) != 4:
+                                        logger.error(f"❌ Layer {layer_idx} k has wrong dimensions: {k.shape}")
+                                    if k.shape[-1] == 0:
+                                        logger.error(f"❌ Layer {layer_idx} k has head_dim=0: {k.shape}")
+                                        raise ValueError(f"Layer {layer_idx} has malformed tensor with head_dim=0")
+
+                                except Exception as e:
+                                    print(f"    ❌ FAILED to retrieve: {e}", flush=True)
+                                    logger.error(f"❌ Cache retrieval failed for layer {layer_idx}: {e}")
+                                    raise
+                        except Exception as e:
+                            logger.error(f"❌ CACHE VALIDATION FAILED: {e}")
+                            raise
+
                 # Forward pass - with session-specific cache
                 outputs = self.model(
                     step_input_ids,
@@ -1241,6 +1270,20 @@ class Worker:
                         merged_key_gpu = merged_key.detach()
                         merged_value_gpu = merged_value.detach()
 
+                        # ✅ VALIDATION: Check merged tensor dimensions BEFORE storing
+                        if layer_idx == 0:
+                            logger.debug(f"[MERGE VALIDATION] session_id={session_id}, chunk_id={last_chunk_id}:")
+                            logger.debug(f"  last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
+                            logger.debug(f"  fill_key.shape={fill_key.shape}")
+                            logger.debug(f"  merged_key_gpu.shape={merged_key_gpu.shape}")
+
+                        # Check for malformed tensors
+                        if len(merged_key_gpu.shape) != 4:
+                            logger.error(f"❌ Merged key has wrong dimensions! Expected 4D, got {merged_key_gpu.shape}")
+                        if merged_key_gpu.shape[-1] == 0:
+                            logger.error(f"❌ Merged key has head_dim=0! Shape: {merged_key_gpu.shape}")
+                            raise ValueError(f"Merge operation created tensor with head_dim=0: {merged_key_gpu.shape}")
+
                         # ✅ DEBUG: Log dtype when merging chunks
                         # if layer_idx == 0:
                         #     logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_gpu={merged_key_gpu.dtype}, merged_value_gpu={merged_value_gpu.dtype}")
@@ -1314,6 +1357,21 @@ class Worker:
                     if layer_idx == 0:
                         logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_gpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
 
+                    # ✅ VALIDATION: Check dimension integrity BEFORE creating chunk
+                    if len(chunk_key_gpu.shape) != 4:
+                        logger.error(f"❌ CRITICAL: chunk_key has wrong number of dimensions! Expected 4D, got {len(chunk_key_gpu.shape)}D with shape {chunk_key_gpu.shape}")
+
+                    # Check for head_dim=0 which causes attention failure
+                    if chunk_key_gpu.shape[-1] == 0:
+                        logger.error(f"❌ CRITICAL: head_dim is 0! Shape: {chunk_key_gpu.shape}")
+                        logger.error(f"   seq_dim={seq_dim}, chunk_start={chunk_start}, chunk_end={chunk_end}")
+                        logger.error(f"   remaining_key.shape={remaining_key.shape}")
+                        raise ValueError(f"Cannot store chunk with head_dim=0: {chunk_key_gpu.shape}")
+
+                    # Verify device
+                    if chunk_key_gpu.device.type != 'cuda':
+                        logger.warning(f"⚠️ Chunk tensor is not on CUDA! Device: {chunk_key_gpu.device}")
+
                     chunk = KVChunk(
                         session_id=session_id,
                         chunk_id=chunk_id,
@@ -1328,6 +1386,11 @@ class Worker:
                     # ✅ DEBUG: Verify num_tokens calculation
                     if layer_idx == 0:
                         logger.debug(f"[DEBUG CHUNK STORE] chunk.num_tokens={chunk.num_tokens} (should be {chunk_end - chunk_start})")
+
+                    # ✅ VALIDATION: After chunk creation, verify it was stored correctly
+                    if chunk.num_tokens != (chunk_end - chunk_start):
+                        logger.error(f"❌ CHUNK NUM_TOKENS MISMATCH! Expected {chunk_end - chunk_start}, got {chunk.num_tokens}")
+                        logger.error(f"   key_tensor.shape={chunk.key_tensor.shape}, value_tensor.shape={chunk.value_tensor.shape}")
 
                     # Store in cache
                     try:

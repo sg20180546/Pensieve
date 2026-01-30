@@ -218,19 +218,15 @@ class KVChunk:
     def move_to_cpu(self) -> None:
         """Move tensors to CPU."""
         if self.location == CacheLocation.GPU:
-            new_kv = {}
-            for layer_idx, (k, v) in self.layer_kv_tensors.items():
-                new_kv[layer_idx] = (k.cpu(), v.cpu())
-            self.layer_kv_tensors = new_kv
+            self.key_tensor = self.key_tensor.cpu()
+            self.value_tensor = self.value_tensor.cpu()
             self.location = CacheLocation.CPU
 
     def move_to_gpu(self, device: str = 'cuda:0') -> None:
         """Move tensors to GPU."""
         if self.location == CacheLocation.CPU:
-            new_kv = {}
-            for layer_idx, (k, v) in self.layer_kv_tensors.items():
-                new_kv[layer_idx] = (k.to(device), v.to(device))
-            self.layer_kv_tensors = new_kv
+            self.key_tensor = self.key_tensor.to(device)
+            self.value_tensor = self.value_tensor.to(device)
             self.location = CacheLocation.GPU
 
 
