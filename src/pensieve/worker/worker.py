@@ -1181,6 +1181,7 @@ class Worker:
             # Process each layer and split into 32-token chunks
             for layer_idx, (k, v) in enumerate(past_key_values):
                 if k is None or v is None:
+                    print("@@@ error kv none",layer_idx)
                     continue
                 print("sj @@@@ layer_idx",layer_idx)
                 # ✅ DEBUG: Print actual shapes to diagnose mismatch
