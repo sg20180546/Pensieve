@@ -461,6 +461,7 @@ class Worker:
                     else:
                         # Turn 1: No cache, use provided mask
                         step_attention_mask = req_attention_mask
+                        session_cache=None
 
                     # ✅ DEBUG: Log exact input to model at step 0
                     logger.debug(f"[STEP 0 INPUT] {session_id}: step_input_ids.shape={step_input_ids.shape}, attention_mask_shape={req_attention_mask.shape if req_attention_mask is not None else 'None'}")
