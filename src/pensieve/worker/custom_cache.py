@@ -89,12 +89,12 @@ class PensieveCache(DynamicCache):
         msg = f"\n🔴🔴🔴 [__getitem__ CALLED] layer_idx={layer_idx} 🔴🔴🔴\n"
         print(msg, flush=True)  # stdout
         print(msg, file=sys.stderr, flush=True)  # stderr
-        try:
-            with open("/tmp/pensieve_getitem.log", "a") as f:
-                f.write(msg)
-                f.flush()
-        except:
-            pass
+        # try:
+        #     with open("/tmp/pensieve_getitem.log", "a") as f:
+        #         f.write(msg)
+        #         f.flush()
+        # except:
+        #     pass
 
         # CRITICAL: Use FILE-BASED logging to bypass buffering issues
         debug_file = "/home/elicer/pensieve_cache_debug.log"
@@ -165,10 +165,10 @@ class PensieveCache(DynamicCache):
 
         if layer_idx in self._layer_kv_cache:
             # Already cached in this forward pass
-            with open("/home/elicer/pensieve_cache_debug.log", "a", buffering=1) as f:
-                f.write(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached\n")
-                f.flush()
-                os.fsync(f.fileno())
+            # with open("/home/elicer/pensieve_cache_debug.log", "a", buffering=1) as f:
+            #     f.write(f"[CACHE_DEBUG] layer_idx={layer_idx} FOUND IN _layer_kv_cache, returning cached\n")
+            #     f.flush()
+            #     os.fsync(f.fileno())
             return self._layer_kv_cache[layer_idx]
 
         # Debug: Print cache state on first call (for visibility)
@@ -406,7 +406,6 @@ class PensieveCache(DynamicCache):
         return keys, values
 
     def is_empty(self) -> bool:
-        print("PenesiveCache is empty")
         """Check if this cache has any cached KV chunks FOR THIS BATCH'S SESSIONS.
 
         ✅ CRITICAL FIX: Only check chunks for sessions in current batch.
@@ -435,7 +434,6 @@ class PensieveCache(DynamicCache):
         return True  # No chunks for any batch session
 
     def __len__(self) -> int:
-        print("PenesiveCache len ",self.num_layers)
         """Return number of layers (required by Cache interface)."""
         return self.num_layers
 
@@ -478,7 +476,6 @@ class PensieveCache(DynamicCache):
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        print("PenesiveCache update")
         """Update cache with newly computed KV tensors.
 
         Called by HuggingFace models after computing new KV tokens during forward pass.
@@ -508,10 +505,7 @@ class PensieveCache(DynamicCache):
         # If _seq_length hasn't been updated yet (before first __getitem__),
         # calculate from actual cache chunks
         if self._seq_length == 0:
-            ret =self.calculate_cached_seq_length()
-            print("PenesiveCache get_seq_length 1",ret)
-            return ret
-        print("PenesiveCache get_seq_length 2",self._seq_length)
+            return self.calculate_cached_seq_length()
         return self._seq_length
 
     def calculate_cached_seq_length(self) -> int:
@@ -557,12 +551,10 @@ class PensieveCache(DynamicCache):
                         last_chunk_tokens = chunk.num_tokens
                         total_tokens = (chunk.chunk_id * CHUNK_SIZE) + last_chunk_tokens
                         max_tokens = max(max_tokens, total_tokens)
-        print("PenesiveCache CaclulateCachedSeqLEngth",max_tokens)
         return max_tokens
 
     def reset(self) -> None:
         """Reset cache for new forward pass."""
-        print("PenesiveCache reset")
         self._layer_kv_cache.clear()
         self._seq_length = 0
         # Reset layers attribute for HuggingFace compatibility
