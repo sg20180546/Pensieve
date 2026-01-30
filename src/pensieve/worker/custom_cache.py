@@ -452,7 +452,7 @@ class PensieveCache(DynamicCache):
             Tuple of (kv_length, kv_offset)
         """
         # Return current sequence length and offset
-        print("PenesiveCache get_mask_sizes")
+        print("PenesiveCache get_mask_sizes",self._seq_length)
         return self._seq_length, 0
 
     def to(self, device, **kwargs):
