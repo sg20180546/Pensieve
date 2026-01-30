@@ -320,13 +320,15 @@ class PensieveCache(DynamicCache):
 
             # ✅ GQA EXPAND: Llama uses 8 KV heads but 32 Query heads
             # Repeat each KV head 4 times to match query head count
+            print(f"[CACHE_DEBUG] Before GQA expand: keys.shape[1]={keys.shape[1]}, checking if needs expand...")
             if keys.shape[1] == 8:  # Llama: 8 KV heads
+                print(f"[CACHE_DEBUG] Expanding 8 KV heads → 32 query heads")
                 keys = keys.repeat_interleave(4, dim=1)  # [1, 8, seq, 128] → [1, 32, seq, 128]
                 values = values.repeat_interleave(4, dim=1)
                 print(f"[CACHE_DEBUG] After GQA expand (Llama): keys.shape={keys.shape}, values.shape={values.shape}\n")
-            elif keys.shape[1] != 32:
+            else:
                 # Only expand if not already 32 heads (Gemma might already be 32)
-                print(f"[CACHE_DEBUG] Skipping GQA expand: keys has {keys.shape[1]} heads (not 8)\n")
+                print(f"[CACHE_DEBUG] Skipping GQA expand: keys has {keys.shape[1]} heads (checking if already 32...)\n")
 
             # 🔴 CRITICAL: Check if seq_length matches expected token count
             if layer_idx == 0:
@@ -451,8 +453,14 @@ class PensieveCache(DynamicCache):
         Returns:
             Tuple of (kv_length, kv_offset)
         """
-        # Return current sequence length and offset
-        print("PenesiveCache get_mask_sizes",self._seq_length)
+        # ✅ CRITICAL: Calculate actual cached seq_length if _seq_length hasn't been set yet
+        # __getitem__ might not have been called yet, so we need to calculate from actual chunks
+        if self._seq_length == 0:
+            actual_seq = self.calculate_cached_seq_length()
+            print(f"[PensieveCache] get_mask_sizes: _seq_length=0, calculating from chunks: {actual_seq}")
+            return actual_seq, 0
+
+        print(f"[PensieveCache] get_mask_sizes: _seq_length={self._seq_length}")
         return self._seq_length, 0
 
     def to(self, device, **kwargs):
