@@ -582,6 +582,7 @@ class Worker:
                             raise
 
                 # Forward pass - with session-specific cache
+                print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
