@@ -266,20 +266,50 @@ class PensieveCache(DynamicCache):
         """Update cache with newly computed KV tensors.
 
         Called by HuggingFace models after computing new KV tokens during forward pass.
+        HuggingFace provides only the newly generated token's KV (shape: [batch, heads, 1, head_dim]).
+        This method accumulates it with previously cached KV by concatenating along sequence dimension.
 
         Args:
-            key_states: New key tensor from model
+            key_states: New key tensor from model (shape: [batch, heads, 1, head_dim] or similar)
             value_states: New value tensor from model
             layer_idx: Which layer these tensors are from
             cache_position: Optional cache position tensor (newer HuggingFace versions)
             **kwargs: Additional arguments for compatibility with different HuggingFace versions
 
         Returns:
-            Tuple of (key_states, value_states) for HuggingFace models to use
+            Tuple of (key_states, value_states) - ACCUMULATED with previous cache
         """
-        # Store in our layer cache
+        # ✅ CRITICAL: Accumulate with previously cached KV
+        # HuggingFace returns only the newly generated token's KV (1 token)
+        # We need to concatenate it with previously cached KV for this layer
+
+        if layer_idx in self._layer_kv_cache:
+            # Get previously cached KV from _layer_kv_cache
+            prev_key, prev_value = self._layer_kv_cache[layer_idx]
+
+            # Only accumulate if both are not None and not empty
+            if prev_key is not None and prev_key.numel() > 0 and key_states is not None and key_states.numel() > 0:
+                # Detect sequence dimension for concatenation
+                # Typically: [batch, heads, seq, head_dim] → concat at dim=2
+                #        or: [batch, seq, heads, head_dim] → concat at dim=1
+                if key_states.dim() == 4:
+                    if key_states.shape[1] < 256:  # Likely heads dimension
+                        seq_dim = 2  # [batch, heads, seq, head_dim]
+                    else:
+                        seq_dim = 1  # [batch, seq, heads, head_dim]
+                else:
+                    seq_dim = 1  # Default
+
+                # Concatenate with previous cache
+                accumulated_key = torch.cat([prev_key, key_states], dim=seq_dim)
+                accumulated_value = torch.cat([prev_value, value_states], dim=seq_dim)
+
+                # Store accumulated cache and return it
+                self._layer_kv_cache[layer_idx] = (accumulated_key, accumulated_value)
+                return accumulated_key, accumulated_value
+
+        # No previous cache for this layer - store new KV and return
         self._layer_kv_cache[layer_idx] = (key_states, value_states)
-        # Return the updated states (required by HuggingFace)
         return key_states, value_states
 
     def get_seq_length(self) -> int:

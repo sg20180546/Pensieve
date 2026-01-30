@@ -684,8 +684,8 @@ class Worker:
                     # logger.error(f"   This indicates cache duplication or incorrect accumulation!")
 
                 # ✅ WARNING: If cache exists but input_seq_len > 1, possible duplication
-                if input_cache_len > 0 and input_seq_len > 1:
-                    logger.warning(f"⚠️ Cache exists ({input_cache_len}), but input has {input_seq_len} tokens. Possible duplication?")
+                # if input_cache_len > 0 and input_seq_len > 1:
+                #     logger.warning(f"⚠️ Cache exists ({input_cache_len}), but input has {input_seq_len} tokens. Possible duplication?")
 
                 # Extract outputs
                 logits = outputs.logits
