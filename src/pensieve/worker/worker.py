@@ -271,7 +271,7 @@ class Worker:
             BatchResult with generated tokens and statistics
         """
         start_time = time.time()
-        logger.debug(f"[execute_batch] START: batch_id={batch.batch_id}, num_requests={len(batch.requests)}, max_new_tokens will be extracted from requests")
+        # logger.debug(f"[execute_batch] START: batch_id={batch.batch_id}, num_requests={len(batch.requests)}, max_new_tokens will be extracted from requests")
 
         # 1. PIN all sessions in this batch to protect from concurrent eviction
         session_ids = [req.session_id for req in batch.requests]
@@ -395,7 +395,7 @@ class Worker:
             # 50256 = GPT-2/GPT-3, 2 = common default, 0 = last resort
             eos_token_id = 50256
 
-        logger.debug(f"[_custom_generate] Using EOS token ID: {eos_token_id}, max_new_tokens: {max_new_tokens}")
+        # logger.debug(f"[_custom_generate] Using EOS token ID: {eos_token_id}, max_new_tokens: {max_new_tokens}")
 
         # Track results per request
         generated_ids = [[] for _ in range(batch_size)]
@@ -1192,14 +1192,14 @@ class Worker:
                     remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, head_dim]
                     remaining_value = new_value[:, fill_last:, :, :]
 
-                if layer_idx == 0:
-                    logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: new_key.shape={new_key.shape}, fill_last={fill_last}")
-                    logger.debug(f"[DEBUG CHUNKS] remaining_key.shape={remaining_key.shape}, remaining_new={remaining_new}")
-                    logger.debug(f"[DEBUG CHUNKS] Will create {(remaining_new + chunk_size - 1) // chunk_size} chunks")
-                    if remaining_new == 0:
-                        logger.warning(f"⚠️ WARNING: remaining_new=0! No more chunks to create. fill_last={fill_last}, tokens_stored={self._get_seq_len_from_kv(new_key)}")
-                    if remaining_new > 0:
-                        logger.debug(f"[DEBUG CHUNKS] Slice details: seq_dim={seq_dim}, slicing new_key[:, :, {fill_last}:, :] or new_key[:, {fill_last}:, :, :]")
+                # if layer_idx == 0:
+                #     logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: new_key.shape={new_key.shape}, fill_last={fill_last}")
+                #     logger.debug(f"[DEBUG CHUNKS] remaining_key.shape={remaining_key.shape}, remaining_new={remaining_new}")
+                #     logger.debug(f"[DEBUG CHUNKS] Will create {(remaining_new + chunk_size - 1) // chunk_size} chunks")
+                #     if remaining_new == 0:
+                #         logger.warning(f"⚠️ WARNING: remaining_new=0! No more chunks to create. fill_last={fill_last}, tokens_stored={self._get_seq_len_from_kv(new_key)}")
+                #     if remaining_new > 0:
+                #         logger.debug(f"[DEBUG CHUNKS] Slice details: seq_dim={seq_dim}, slicing new_key[:, :, {fill_last}:, :] or new_key[:, {fill_last}:, :, :]")
 
                 for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
                     # Calculate token range for this chunk
@@ -1219,8 +1219,8 @@ class Worker:
                         chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
                         chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
 
-                    if layer_idx == 0:
-                        logger.debug(f"[DEBUG CHUNK_EXTRACT] chunk_idx={chunk_idx}: extracted shape={chunk_key.shape}, seq_dim={seq_dim}")
+                    # if layer_idx == 0:
+                    #     logger.debug(f"[DEBUG CHUNK_EXTRACT] chunk_idx={chunk_idx}: extracted shape={chunk_key.shape}, seq_dim={seq_dim}")
 
                     # Determine chunk_id
                     chunk_id = next_chunk_id + chunk_idx
@@ -1238,12 +1238,12 @@ class Worker:
                     chunk_value_gpu = chunk_value.detach()
 
                     # ✅ DEBUG: Log tensor shape when storing chunks
-                    if layer_idx == 0:
-                        logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_gpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
+                    # if layer_idx == 0:
+                    #     logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_gpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
 
                     # ✅ VALIDATION: Check dimension integrity BEFORE creating chunk
-                    if len(chunk_key_gpu.shape) != 4:
-                        logger.error(f"❌ CRITICAL: chunk_key has wrong number of dimensions! Expected 4D, got {len(chunk_key_gpu.shape)}D with shape {chunk_key_gpu.shape}")
+                    # if len(chunk_key_gpu.shape) != 4:
+                    #     logger.error(f"❌ CRITICAL: chunk_key has wrong number of dimensions! Expected 4D, got {len(chunk_key_gpu.shape)}D with shape {chunk_key_gpu.shape}")
 
                     # Check for head_dim=0 which causes attention failure
                     if chunk_key_gpu.shape[-1] == 0:
@@ -1268,13 +1268,13 @@ class Worker:
                     )
 
                     # ✅ DEBUG: Verify num_tokens calculation
-                    if layer_idx == 0:
-                        logger.debug(f"[DEBUG CHUNK STORE] chunk.num_tokens={chunk.num_tokens} (should be {chunk_end - chunk_start})")
+                    # if layer_idx == 0:
+                        # logger.debug(f"[DEBUG CHUNK STORE] chunk.num_tokens={chunk.num_tokens} (should be {chunk_end - chunk_start})")
 
                     # ✅ VALIDATION: After chunk creation, verify it was stored correctly
-                    if chunk.num_tokens != (chunk_end - chunk_start):
-                        logger.error(f"❌ CHUNK NUM_TOKENS MISMATCH! Expected {chunk_end - chunk_start}, got {chunk.num_tokens}")
-                        logger.error(f"   key_tensor.shape={chunk.key_tensor.shape}, value_tensor.shape={chunk.value_tensor.shape}")
+                    # if chunk.num_tokens != (chunk_end - chunk_start):
+                    #     logger.error(f"❌ CHUNK NUM_TOKENS MISMATCH! Expected {chunk_end - chunk_start}, got {chunk.num_tokens}")
+                    #     logger.error(f"   key_tensor.shape={chunk.key_tensor.shape}, value_tensor.shape={chunk.value_tensor.shape}")
 
                     # Store in cache
                     try:
