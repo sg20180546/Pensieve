@@ -3,9 +3,9 @@
 import torch
 from typing import Dict, List, Optional, Tuple
 
-from transformers import DynamicCache
+from transformers import Cache
 
-class PensieveCache(DynamicCache):
+class PensieveCache(Cache):
     """Custom KV cache implementing HuggingFace Cache interface (layer-wise chunking).
 
     This class enables HuggingFace models to use our two-tier KV cache
