@@ -514,7 +514,7 @@ class Worker:
                     if hasattr(input_cache, 'get_seq_length'):
                         # PensieveCache object
                         input_cache_len = input_cache.get_seq_length()
-                        logger.debug(f"[CACHE_LEN_STEP{step}] PensieveCache.get_seq_length()={input_cache_len}, is_empty={input_cache.is_empty()}")
+                        # logger.debug(f"[CACHE_LEN_STEP{step}] PensieveCache.get_seq_length()={input_cache_len}, is_empty={input_cache.is_empty()}")
                     else:
                         # Standard HuggingFace cache (DynamicCache or tuple of tuples)
                         try:
