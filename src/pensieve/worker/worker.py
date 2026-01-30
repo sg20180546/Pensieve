@@ -593,6 +593,54 @@ class Worker:
 
                 # Forward pass - with session-specific cache
                 # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
+
+                # 🔴 PRE-FORWARD CACHE VALIDATION: Find malformed chunks before model execution
+                if step == 0 and input_cache is not None and hasattr(input_cache, 'cache_manager'):
+                    print("\n" + "="*80, flush=True)
+                    print("[PRE-FORWARD CACHE VALIDATION] Inspecting all cached chunks...", flush=True)
+                    print("="*80, flush=True)
+
+                    gpu_cache = input_cache.cache_manager.gpu_cache
+                    cpu_cache = input_cache.cache_manager.cpu_cache
+                    malformed_chunks = []
+
+                    for cache_dict_name, cache_dict in [("GPU", gpu_cache), ("CPU", cpu_cache)]:
+                        for key, chunk in cache_dict.items():
+                            if chunk.key_tensor is None or chunk.value_tensor is None:
+                                malformed_chunks.append({
+                                    'layer': chunk.layer_idx,
+                                    'chunk': chunk.chunk_id,
+                                    'session': chunk.session_id,
+                                    'loc': cache_dict_name,
+                                    'issue': 'KV is None'
+                                })
+                            elif chunk.key_tensor.shape[-1] == 0:
+                                malformed_chunks.append({
+                                    'layer': chunk.layer_idx,
+                                    'chunk': chunk.chunk_id,
+                                    'session': chunk.session_id,
+                                    'loc': cache_dict_name,
+                                    'issue': f'key head_dim=0, k.shape={chunk.key_tensor.shape}'
+                                })
+                            elif chunk.value_tensor.shape[-1] == 0:
+                                malformed_chunks.append({
+                                    'layer': chunk.layer_idx,
+                                    'chunk': chunk.chunk_id,
+                                    'session': chunk.session_id,
+                                    'loc': cache_dict_name,
+                                    'issue': f'value head_dim=0, v.shape={chunk.value_tensor.shape}'
+                                })
+
+                    if malformed_chunks:
+                        print(f"\n❌ FOUND {len(malformed_chunks)} MALFORMED CHUNKS:\n", flush=True)
+                        for c in malformed_chunks:
+                            print(f"  Layer {c['layer']}, Chunk {c['chunk']} (Session {c['session']}, {c['loc']}): {c['issue']}", flush=True)
+                        print()
+                    else:
+                        total = len(gpu_cache) + len(cpu_cache)
+                        print(f"✅ All {total} chunks valid (GPU: {len(gpu_cache)}, CPU: {len(cpu_cache)})", flush=True)
+                    print("="*80 + "\n", flush=True)
+
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
