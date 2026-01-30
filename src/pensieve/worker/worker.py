@@ -666,9 +666,9 @@ class Worker:
                 #     logger.debug(f"[Step {step}] Session {session_id}: {input_cache_len}↓ cached + {input_seq_len} new → {output_cache_len} total ({cache_reuse_pct:.1f}% reuse)")
 
                 # ✅ CORRECTNESS CHECK: Ensure no duplication
-                if output_cache_len != expected_len:
-                    logger.error(f"❌ KV CACHE MISMATCH! Expected {expected_len}, got {output_cache_len}")
-                    logger.error(f"   This indicates cache duplication or incorrect accumulation!")
+                # if output_cache_len != expected_len:
+                    # logger.error(f"❌ KV CACHE MISMATCH! Expected {expected_len}, got {output_cache_len}")
+                    # logger.error(f"   This indicates cache duplication or incorrect accumulation!")
 
                 # ✅ WARNING: If cache exists but input_seq_len > 1, possible duplication
                 if input_cache_len > 0 and input_seq_len > 1:
@@ -1276,17 +1276,17 @@ class Worker:
             total_chunks = (total_tokens + chunk_size - 1) // chunk_size
 
             # ✅ DEBUG: Log after all values calculated
-            logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before}, total_tokens={total_tokens}, total_chunks={total_chunks}")
+            # logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
             # Process each layer and split into 32-token chunks
             # for layer_idx, (k, v) in enumerate(past_key_values):
-            print("len(past_key_values)",len(past_key_values))
+            # print("len(past_key_values)",len(past_key_values))
             for layer_idx in range(len(past_key_values)):
                 k, v = past_key_values[layer_idx]
                 if k is None or v is None:
                     print("@@@ error kv none",layer_idx)
                     continue
-                print("sj @@@@ layer_idx",layer_idx)
+                # print("sj @@@@ layer_idx",layer_idx)
                 # ✅ DEBUG: Print actual shapes to diagnose mismatch
                 if layer_idx == 0:
                     # logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
