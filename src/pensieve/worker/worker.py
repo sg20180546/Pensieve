@@ -391,9 +391,14 @@ class Worker:
             # Fallback: use model config
             eos_token_id = getattr(self.model.config, 'eos_token_id', None)
         if eos_token_id is None:
-            # Last resort: use common EOS tokens
-            # 50256 = GPT-2/GPT-3, 2 = common default, 0 = last resort
-            eos_token_id = 50256
+            # Last resort: check model type
+            model_type = getattr(self.model.config, 'model_type', '').lower()
+            if 'llama' in model_type:
+                eos_token_id = 128009  # Llama-3
+            elif 'gpt' in model_type:
+                eos_token_id = 50256   # GPT-2/GPT-3
+            else:
+                eos_token_id = 2       # Common fallback
 
         # logger.debug(f"[_custom_generate] Using EOS token ID: {eos_token_id}, max_new_tokens: {max_new_tokens}")
 
