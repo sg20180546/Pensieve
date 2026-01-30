@@ -425,25 +425,13 @@ class Worker:
                 if hasattr(pensieve_cache, 'is_empty') and pensieve_cache.is_empty():
                     # Cache is empty, pass None to model (will compute new KV)
                     session_cache = None
-                    if _cache_debug_enabled:
-                        logger.debug(f"[DEBUG] {session_id}: pensieve_cache.is_empty()=True → session_cache=None")
                 else:
                     # Cache has chunks, pass full PensieveCache
                     # (it will filter to only this session's chunks)
                     session_cache = pensieve_cache
-                    # session_cache=None
-                    if _cache_debug_enabled:
-                        logger.debug(f"[DEBUG] {session_id}: pensieve_cache has chunks → session_cache=PensieveCache")
             except Exception as e:
                 logger.warning(f"Failed to get session cache for {session_id}: {e}")
                 session_cache = None
-
-            # ✅ CACHE INSPECTION: Thoroughly examine cached chunks before generation
-            # if session_cache is not None and not session_cache.is_empty():
-            #     inspection_report = self._inspect_cache_thoroughly(session_id, session_cache)
-            #     print(inspection_report)  # Print to console for immediate visibility
-            #     logger.debug(inspection_report)
-            print(session_cache)
             # Generation loop for this session only
             session_past_kv = None
             ttft_recorded = False
@@ -456,7 +444,6 @@ class Worker:
                     # Turn 1: session_cache=None, mask covers input only (correct)
                     # Turn 2+: session_cache has cached KV, mask must be None (model auto-extends)
                     is_cache_empty = session_cache.is_empty() if session_cache is not None else True
-                    print(f"[DEBUG] {session_id}: session_cache={session_cache is not None}, is_empty()={is_cache_empty}")
                     if session_cache is not None and not is_cache_empty:
                         # Turn 2+: Cache exists, let model handle attention for cached + new tokens
                         step_attention_mask = None
@@ -464,11 +451,6 @@ class Worker:
                         # Turn 1: No cache, use provided mask
                         # (session_cache is already None from try-except block above)
                         step_attention_mask = req_attention_mask
-
-                    # ✅ DEBUG: Log exact input to model at step 0
-                    logger.debug(f"[STEP 0 INPUT] {session_id}: step_input_ids.shape={step_input_ids.shape}, attention_mask_shape={req_attention_mask.shape if req_attention_mask is not None else 'None'}")
-                    if req_attention_mask is not None:
-                        logger.debug(f"[STEP 0 INPUT] {session_id}: attention_mask sum (non-padded tokens)={req_attention_mask.sum().item()}")
                 else:
                     step_input_ids = next_token_ids.unsqueeze(1)  # [1, 1]
                     # CRITICAL: When using past_key_values, don't constrain attention_mask
@@ -498,36 +480,11 @@ class Worker:
                 if step_attention_mask is not None:
                     step_attention_mask = step_attention_mask.to(model_device)
 
-                # ✅ DEBUG: KV cache accumulation tracking
-                # Check input KV cache (what we're passing to the model)
-                if step==0:
-                    input_cache = session_cache 
-                    # print("@@@@@@ STEP 0 Input cache = seession cache",session_cache)
+                # Track KV cache for accumulation
+                if step == 0:
+                    input_cache = session_cache
                 else:
-                    # print("@@@@@@ STEP 1+ Input cache = seession cache",session_past_kv)
-                    input_cache=session_past_kv
-                # print("!!!!!!! SJ input cache !!!",input_cache)
-
-                # input_cache=session_past_kv
-                if input_cache is not None and len(input_cache) > 0:
-                    # Handle both PensieveCache and standard HuggingFace cache tuples
-                    if hasattr(input_cache, 'get_seq_length'):
-                        # PensieveCache object
-                        input_cache_len = input_cache.get_seq_length()
-                        # logger.debug(f"[CACHE_LEN_STEP{step}] PensieveCache.get_seq_length()={input_cache_len}, is_empty={input_cache.is_empty()}")
-                    else:
-                        # Standard HuggingFace cache (DynamicCache or tuple of tuples)
-                        try:
-                            input_cache_len = self._get_seq_len_from_kv(input_cache[0][0])
-                        except (TypeError, IndexError):
-                            input_cache_len = 0
-                        logger.debug(f"[CACHE_LEN_STEP{step}] Standard cache, len={input_cache_len}")
-                else:
-                    input_cache_len = 0
-                    logger.debug(f"[CACHE_LEN_STEP{step}] input_cache is None or empty!")
-
-                input_seq_len = step_input_ids.shape[1]  # Current input token count
-                logger.debug(f"[CACHE_EXPECT_STEP{step}] input_cache_len={input_cache_len}, input_seq_len={input_seq_len}, expected_output={input_cache_len + input_seq_len}")
+                    input_cache = session_past_kv
                 # input_len = len(req.input_ids)
                 # ✅ VERIFY PENSIEVE WORKING: Only log when Step 0 has cache from previous turns
                 # This proves multi-turn cache reuse is working (not same-turn cache)
@@ -635,51 +592,6 @@ class Worker:
             # Log generation summary for this session
             tokens_generated = len(generated_ids[req_idx])
             logger.debug(f"[_custom_generate] Session {session_id}: Generated {tokens_generated} tokens (max allowed: {max_new_tokens})")
-
-            # ✅ DEBUG: Log final KV shape before storage
-            if session_past_kv and len(session_past_kv) > 0:
-                final_k, final_v = session_past_kv[0]
-                if final_k is not None:
-                    final_seq_len = self._get_seq_len_from_kv(final_k)
-                    input_seq_len = req_input_ids.shape[1] if req_input_ids.dim() > 1 else 1
-                    expected_final_seq = input_seq_len + tokens_generated
-                    logger.debug(f"[FINAL KV] {session_id}: final_k.shape={final_k.shape}, seq_len={final_seq_len}, expected={expected_final_seq}")
-                    if final_seq_len != expected_final_seq:
-                        logger.error(f"❌ KV SEQ LEN MISMATCH! Expected {expected_final_seq} but got {final_seq_len}")
-
-                        # ✅ TOKEN RECOVERY: One missing token detected, recover it
-                        token_loss = expected_final_seq - final_seq_len
-                        if tokens_generated > 0 and token_loss > 0:
-                            logger.warning(f"[TOKEN RECOVERY] Detecting {token_loss} token loss. Attempting recovery with last generated token...")
-
-                            try:
-                                # Get the last generated token
-                                last_token_id = generated_ids[req_idx][-1]
-                                last_token_tensor = torch.tensor([[last_token_id]], device=model_device, dtype=torch.long)
-
-                                # Forward pass with just the last token to get its KV representation
-                                recovery_outputs = self.model(
-                                    last_token_tensor,
-                                    past_key_values=session_past_kv,
-                                    use_cache=True,
-                                    return_dict=True,
-                                )
-
-                                # Update KV cache with the recovered token
-                                session_past_kv = recovery_outputs.past_key_values
-
-                                # Verify recovery
-                                if session_past_kv and len(session_past_kv) > 0:
-                                    recovered_k, recovered_v = session_past_kv[0]
-                                    if recovered_k is not None:
-                                        recovered_seq_len = self._get_seq_len_from_kv(recovered_k)
-                                        logger.debug(f"[TOKEN RECOVERY] After recovery: seq_len={recovered_seq_len}, expected={expected_final_seq}")
-                                        if recovered_seq_len == expected_final_seq:
-                                            logger.info(f"✅ TOKEN RECOVERY SUCCESS! Recovered {token_loss} missing token(s). Now has {recovered_seq_len} tokens")
-                                        else:
-                                            logger.warning(f"⚠️ TOKEN RECOVERY INCOMPLETE: Still {expected_final_seq - recovered_seq_len} tokens short")
-                            except Exception as e:
-                                logger.error(f"❌ TOKEN RECOVERY FAILED: {e}")
 
             # Cache status after generation
             # if _cache_debug_enabled and pensieve_cache is not None:
