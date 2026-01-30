@@ -358,16 +358,32 @@ class PensieveCache(Cache):
         return keys, values
 
     def is_empty(self) -> bool:
-        """Check if this cache has any cached KV chunks.
+        """Check if this cache has any cached KV chunks FOR THIS BATCH'S SESSIONS.
+
+        ✅ CRITICAL FIX: Only check chunks for sessions in current batch.
+        This prevents other sessions' cached chunks from being seen as "cache exists"
+        for a session on its first turn.
+
+        Example:
+        - Session A completes Turn 1 → chunks stored in cache_manager
+        - Session B's first request arrives
+        - OLD CODE: is_empty() checks cache_manager globally → finds Session A's chunks → returns False
+        - NEW CODE: is_empty() checks only for Session B → finds nothing → returns True
+        - Now Session B correctly gets input_cache=None for its first turn!
 
         Returns:
-            True if no cached chunks, False if has cached chunks
+            True if no cached chunks for this batch's sessions, False if has cached chunks
         """
-        # Check actual cache manager, not just current forward pass state
-        # This ensures we detect cache from previous turns correctly
-        has_gpu_chunks = len(self.cache_manager.gpu_cache) > 0
-        has_cpu_chunks = len(self.cache_manager.cpu_cache) > 0
-        return not (has_gpu_chunks or has_cpu_chunks)
+        # Get session_ids for sessions in this batch
+        session_ids = {info.get('session_id') for info in self.batch_info.values()}
+
+        # Check if any chunks exist for ONLY these sessions
+        for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+            for chunk in cache_dict.values():
+                if chunk.session_id in session_ids:
+                    return False  # Found at least one chunk for a batch session
+
+        return True  # No chunks for any batch session
 
     def __len__(self) -> int:
         """Return number of layers (required by Cache interface)."""
