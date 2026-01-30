@@ -500,9 +500,9 @@ class Worker:
                 # Check input KV cache (what we're passing to the model)
                 if step==0:
                     input_cache = session_cache 
-                    print("@@@@@@ STEP 1 Input cache = seession cache",session_cache)
+                    print("@@@@@@ STEP 0 Input cache = seession cache",session_cache)
                 else:
-                    print("@@@@@@ STEP 2+ Input cache = seession cache",session_past_kv)
+                    print("@@@@@@ STEP 1+ Input cache = seession cache",session_past_kv)
                     input_cache=session_past_kv
                 # print("!!!!!!! SJ input cache !!!",input_cache)
 
@@ -526,68 +526,68 @@ class Worker:
                 # ✅ VERIFY PENSIEVE WORKING: Only log when Step 0 has cache from previous turns
                 # This proves multi-turn cache reuse is working (not same-turn cache)
                 # Step 0 + input_cache_len > 0 = cross-turn cache reuse (NEW TURN using previous cache)
-                if _cache_debug_enabled and step == 0:
-                    # DEBUG: Check Step 0 state for ALL turns
-                    logger.debug(f"[DEBUG Step 0] {session_id}: cache={input_cache_len} tokens, input={input_seq_len} tokens, session_cache={session_cache is not None}")
-                    # ✅ DEBUG: Show batch_info positions to verify chunking
-                    if hasattr(input_cache, 'batch_info'):
-                        for info in input_cache.batch_info.values():
-                            if info.get('session_id') == session_id:
-                                positions = info.get('positions', [])
-                                logger.debug(f"[DEBUG] session_id={session_id}: batch_info positions={positions} (chunk count={len(positions)})")
-                                # ✅ CRITICAL: Show actual chunk sizes in cache
-                                if positions:
-                                    max_chunk_id = max(positions)
-                                    for cache_dict in [input_cache.cache_manager.gpu_cache, input_cache.cache_manager.cpu_cache]:
-                                        for chunk in cache_dict.values():
-                                            if chunk.session_id == session_id and chunk.chunk_id == max_chunk_id:
-                                                logger.debug(f"[DEBUG] Last chunk ({max_chunk_id}): num_tokens={chunk.num_tokens} (expected ~32 or partial)")
-                    if input_cache_len > 0:
-                        # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
-                        logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
+                # if _cache_debug_enabled and step == 0:
+                #     # DEBUG: Check Step 0 state for ALL turns
+                #     logger.debug(f"[DEBUG Step 0] {session_id}: cache={input_cache_len} tokens, input={input_seq_len} tokens, session_cache={session_cache is not None}")
+                #     # ✅ DEBUG: Show batch_info positions to verify chunking
+                #     if hasattr(input_cache, 'batch_info'):
+                #         for info in input_cache.batch_info.values():
+                #             if info.get('session_id') == session_id:
+                #                 positions = info.get('positions', [])
+                #                 logger.debug(f"[DEBUG] session_id={session_id}: batch_info positions={positions} (chunk count={len(positions)})")
+                #                 # ✅ CRITICAL: Show actual chunk sizes in cache
+                #                 if positions:
+                #                     max_chunk_id = max(positions)
+                #                     for cache_dict in [input_cache.cache_manager.gpu_cache, input_cache.cache_manager.cpu_cache]:
+                #                         for chunk in cache_dict.values():
+                #                             if chunk.session_id == session_id and chunk.chunk_id == max_chunk_id:
+                #                                 logger.debug(f"[DEBUG] Last chunk ({max_chunk_id}): num_tokens={chunk.num_tokens} (expected ~32 or partial)")
+                #     if input_cache_len > 0:
+                #         # NEW TURN with cached KV from previous turns - CORE PENSIEVE FEATURE
+                #         logger.debug(f"[Pensieve {session_id}] ⭐ NEW TURN REUSES CACHE: Forward input=[1, {input_seq_len}] (new query) + cached=[1, {input_cache_len}] (from previous turns)")
                 # print(input_cache.len())/
                 # print(input_cache.shape)
                 # print(input_cache)
                 # print(input_cache)
                 
                 # 🔴 DEBUG: Check what we're passing as past_key_values
-                if step == 0:  # Only on first step
-                    cache_type = type(input_cache).__name__ if input_cache is not None else "None"
-                    cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
-                    print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
-                    print(f"  type: {cache_type}", flush=True)
-                    print(f"  len: {cache_len}", flush=True)
-                    print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
-                    print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
+                # if step == 0:  # Only on first step
+                #     cache_type = type(input_cache).__name__ if input_cache is not None else "None"
+                #     cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
+                #     print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
+                #     print(f"  type: {cache_type}", flush=True)
+                #     print(f"  len: {cache_len}", flush=True)
+                #     print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
+                #     print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
 
-                    # ✅ VALIDATION: If using PensieveCache, verify chunks exist and have correct shapes
-                    if input_cache is not None and hasattr(input_cache, 'cache_manager'):
-                        print(f"\n🔍 [CACHE VALIDATION] Verifying PensieveCache contents before forward pass:", flush=True)
-                        try:
-                            # For each layer, verify we can fetch valid chunks
-                            for layer_idx in range(min(self.num_layers, 2)):  # Check first 2 layers
-                                print(f"\n  Layer {layer_idx}:", flush=True)
-                                try:
-                                    # Try to get KV for this layer (calls __getitem__)
-                                    k, v = input_cache[layer_idx]
-                                    print(f"    ✅ Retrieved: k.shape={k.shape}, v.shape={v.shape}, device={k.device}", flush=True)
+                #     # ✅ VALIDATION: If using PensieveCache, verify chunks exist and have correct shapes
+                #     if input_cache is not None and hasattr(input_cache, 'cache_manager'):
+                #         print(f"\n🔍 [CACHE VALIDATION] Verifying PensieveCache contents before forward pass:", flush=True)
+                #         try:
+                #             # For each layer, verify we can fetch valid chunks
+                #             for layer_idx in range(min(self.num_layers, 2)):  # Check first 2 layers
+                #                 print(f"\n  Layer {layer_idx}:", flush=True)
+                #                 try:
+                #                     # Try to get KV for this layer (calls __getitem__)
+                #                     k, v = input_cache[layer_idx]
+                #                     print(f"    ✅ Retrieved: k.shape={k.shape}, v.shape={v.shape}, device={k.device}", flush=True)
 
-                                    # Validate shapes
-                                    if k.numel() == 0:
-                                        logger.warning(f"⚠️ Layer {layer_idx} KV is EMPTY!")
-                                    if len(k.shape) != 4:
-                                        logger.error(f"❌ Layer {layer_idx} k has wrong dimensions: {k.shape}")
-                                    if k.shape[-1] == 0:
-                                        logger.error(f"❌ Layer {layer_idx} k has head_dim=0: {k.shape}")
-                                        raise ValueError(f"Layer {layer_idx} has malformed tensor with head_dim=0")
+                #                     # Validate shapes
+                #                     if k.numel() == 0:
+                #                         logger.warning(f"⚠️ Layer {layer_idx} KV is EMPTY!")
+                #                     if len(k.shape) != 4:
+                #                         logger.error(f"❌ Layer {layer_idx} k has wrong dimensions: {k.shape}")
+                #                     if k.shape[-1] == 0:
+                #                         logger.error(f"❌ Layer {layer_idx} k has head_dim=0: {k.shape}")
+                #                         raise ValueError(f"Layer {layer_idx} has malformed tensor with head_dim=0")
 
-                                except Exception as e:
-                                    print(f"    ❌ FAILED to retrieve: {e}", flush=True)
-                                    logger.error(f"❌ Cache retrieval failed for layer {layer_idx}: {e}")
-                                    raise
-                        except Exception as e:
-                            logger.error(f"❌ CACHE VALIDATION FAILED: {e}")
-                            raise
+                #                 except Exception as e:
+                #                     print(f"    ❌ FAILED to retrieve: {e}", flush=True)
+                #                     logger.error(f"❌ Cache retrieval failed for layer {layer_idx}: {e}")
+                #                     raise
+                #         except Exception as e:
+                #             logger.error(f"❌ CACHE VALIDATION FAILED: {e}")
+                #             raise
 
                 # Forward pass - with session-specific cache
                 # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
