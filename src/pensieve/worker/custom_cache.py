@@ -316,7 +316,17 @@ class PensieveCache(DynamicCache):
 
             keys = torch.cat(all_keys, dim=seq_dim)  # Concatenate along detected sequence dimension
             values = torch.cat(all_values, dim=seq_dim)
-            print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            print(f"[CACHE_DEBUG] Result (before GQA expand): keys.shape={keys.shape}, values.shape={values.shape}\n")
+
+            # ✅ GQA EXPAND: Llama uses 8 KV heads but 32 Query heads
+            # Repeat each KV head 4 times to match query head count
+            if keys.shape[1] == 8:  # Llama: 8 KV heads
+                keys = keys.repeat_interleave(4, dim=1)  # [1, 8, seq, 128] → [1, 32, seq, 128]
+                values = values.repeat_interleave(4, dim=1)
+                print(f"[CACHE_DEBUG] After GQA expand (Llama): keys.shape={keys.shape}, values.shape={values.shape}\n")
+            elif keys.shape[1] != 32:
+                # Only expand if not already 32 heads (Gemma might already be 32)
+                print(f"[CACHE_DEBUG] Skipping GQA expand: keys has {keys.shape[1]} heads (not 8)\n")
 
             # 🔴 CRITICAL: Check if seq_length matches expected token count
             if layer_idx == 0:
