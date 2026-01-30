@@ -514,16 +514,20 @@ class Worker:
                     if hasattr(input_cache, 'get_seq_length'):
                         # PensieveCache object
                         input_cache_len = input_cache.get_seq_length()
+                        logger.debug(f"[CACHE_LEN_STEP{step}] PensieveCache.get_seq_length()={input_cache_len}, is_empty={input_cache.is_empty()}")
                     else:
                         # Standard HuggingFace cache (DynamicCache or tuple of tuples)
                         try:
                             input_cache_len = self._get_seq_len_from_kv(input_cache[0][0])
                         except (TypeError, IndexError):
                             input_cache_len = 0
+                        logger.debug(f"[CACHE_LEN_STEP{step}] Standard cache, len={input_cache_len}")
                 else:
                     input_cache_len = 0
-                
+                    logger.debug(f"[CACHE_LEN_STEP{step}] input_cache is None or empty!")
+
                 input_seq_len = step_input_ids.shape[1]  # Current input token count
+                logger.debug(f"[CACHE_EXPECT_STEP{step}] input_cache_len={input_cache_len}, input_seq_len={input_seq_len}, expected_output={input_cache_len + input_seq_len}")
                 # input_len = len(req.input_ids)
                 # ✅ VERIFY PENSIEVE WORKING: Only log when Step 0 has cache from previous turns
                 # This proves multi-turn cache reuse is working (not same-turn cache)
