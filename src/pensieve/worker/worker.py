@@ -512,16 +512,6 @@ class Worker:
                 # print(input_cache.shape)
                 # print(input_cache)
                 # print(input_cache)
-                
-                # 🔴 DEBUG: Check what we're passing as past_key_values
-                if step == 0:  # Only on first step
-                    cache_type = type(input_cache).__name__ if input_cache is not None else "None"
-                    cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
-                    print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
-                    print(f"  type: {cache_type}", flush=True)
-                    print(f"  len: {cache_len}", flush=True)
-                    print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
-                    print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
 
                 #     # ✅ VALIDATION: If using PensieveCache, verify chunks exist and have correct shapes
                 #     if input_cache is not None and hasattr(input_cache, 'cache_manager'):
@@ -902,55 +892,6 @@ class Worker:
                 print(f"Warning: Failed to store new KV chunks: {e}")
 
         # 🔴 POST-STORE VALIDATION: Check chunks immediately after storing
-        print("\n" + "="*80, flush=True)
-        print("[POST-STORE CHUNK VALIDATION] Checking stored chunks right after _store_new_kv_chunks()", flush=True)
-        print("="*80, flush=True)
-
-        gpu_chunks = self.cache.gpu_cache if hasattr(self.cache, 'gpu_cache') else {}
-        cpu_chunks = self.cache.cpu_cache if hasattr(self.cache, 'cpu_cache') else {}
-
-        total_chunks = len(gpu_chunks) + len(cpu_chunks)
-        print(f"Total chunks in cache: {total_chunks} (GPU: {len(gpu_chunks)}, CPU: {len(cpu_chunks)})", flush=True)
-
-        if total_chunks > 0:
-            # Group by session and layer
-            by_session = {}
-            by_layer = {}
-
-            for cache_dict in [gpu_chunks, cpu_chunks]:
-                for key, chunk in cache_dict.items():
-                    # Group by session
-                    if chunk.session_id not in by_session:
-                        by_session[chunk.session_id] = []
-                    by_session[chunk.session_id].append(chunk)
-
-                    # Group by layer
-                    if chunk.layer_idx not in by_layer:
-                        by_layer[chunk.layer_idx] = []
-                    by_layer[chunk.layer_idx].append(chunk)
-
-            # Check each layer
-            print(f"\nLayer-wise check (showing first 2 layers):", flush=True)
-            for layer_idx in sorted(by_layer.keys())[:2]:
-                layer_chunks = sorted(by_layer[layer_idx], key=lambda c: (c.session_id, c.chunk_id))
-                print(f"\n  Layer {layer_idx}:", flush=True)
-
-                total_seq_this_layer = 0
-                for chunk in layer_chunks:
-                    # Llama format: [batch, num_heads, seq, head_dim]
-                    # seq is at shape[2], NOT shape[1]
-                    if chunk.key_tensor.dim() == 4:
-                        seq_len = chunk.key_tensor.shape[2]  # ✅ FIX: seq at dim 2
-                    else:
-                        seq_len = 0
-                    total_seq_this_layer += seq_len
-
-                    print(f"    Chunk({chunk.session_id}, {chunk.chunk_id}): k.shape={chunk.key_tensor.shape}, seq={seq_len}", flush=True)
-
-                print(f"    Total seq in layer {layer_idx}: {total_seq_this_layer}", flush=True)
-
-        print("="*80 + "\n", flush=True)
-
         return result
 
     def _store_new_kv_chunks(
