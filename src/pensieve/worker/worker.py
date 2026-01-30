@@ -439,11 +439,11 @@ class Worker:
                 session_cache = None
 
             # ✅ CACHE INSPECTION: Thoroughly examine cached chunks before generation
-            if session_cache is not None and not session_cache.is_empty():
-                inspection_report = self._inspect_cache_thoroughly(session_id, session_cache)
-                print(inspection_report)  # Print to console for immediate visibility
-                logger.debug(inspection_report)
-
+            # if session_cache is not None and not session_cache.is_empty():
+            #     inspection_report = self._inspect_cache_thoroughly(session_id, session_cache)
+            #     print(inspection_report)  # Print to console for immediate visibility
+            #     logger.debug(inspection_report)
+            print(session_cache)
             # Generation loop for this session only
             session_past_kv = None
             ttft_recorded = False
@@ -460,8 +460,8 @@ class Worker:
                         step_attention_mask = None
                     else:
                         # Turn 1: No cache, use provided mask
+                        # (session_cache is already None from try-except block above)
                         step_attention_mask = req_attention_mask
-                        session_cache=None
 
                     # ✅ DEBUG: Log exact input to model at step 0
                     logger.debug(f"[STEP 0 INPUT] {session_id}: step_input_ids.shape={step_input_ids.shape}, attention_mask_shape={req_attention_mask.shape if req_attention_mask is not None else 'None'}")
