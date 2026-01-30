@@ -513,10 +513,13 @@ class Worker:
                         # PensieveCache object
                         input_cache_len = input_cache.get_seq_length()
                     else:
-                        # Standard HuggingFace cache (tuple of tuples)
+                        # Standard HuggingFace cache (tuple of tuples after to_legacy_cache conversion)
+                        # input_cache is [(k0, v0), (k1, v1), ..., (k31, v31)]
                         try:
-                            input_cache_len = self._get_seq_len_from_kv(input_cache[0][0])
-                        except (TypeError, IndexError):
+                            first_layer_kv = input_cache[0]  # Get first layer tuple (k, v)
+                            first_k = first_layer_kv[0]      # Get k tensor from first layer
+                            input_cache_len = self._get_seq_len_from_kv(first_k)
+                        except (TypeError, IndexError, AttributeError):
                             input_cache_len = 0
                 else:
                     input_cache_len = 0
@@ -590,11 +593,21 @@ class Worker:
                 #             raise
 
                 # Forward pass - with session-specific cache
+                # ✅ CRITICAL: Convert tuple back to DynamicCache format for model
+                # We stored as tuple for layer 0-31 processing, but model expects DynamicCache
+                model_input_cache = input_cache
+                if isinstance(input_cache, tuple) and not hasattr(input_cache, '__getitem__'):
+                    # Tuple of tuples → needs to be passed as-is to model (HF handles it)
+                    model_input_cache = input_cache
+                elif isinstance(input_cache, tuple) and len(input_cache) > 0 and isinstance(input_cache[0], tuple):
+                    # Tuple of (k, v) tuples - model can handle this directly
+                    model_input_cache = input_cache
+
                 # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
                 outputs = self.model(
                     step_input_ids,
                     attention_mask=step_attention_mask,
-                    past_key_values=input_cache,
+                    past_key_values=model_input_cache,
                     use_cache=True,
                     return_dict=True,
                 )
