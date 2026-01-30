@@ -630,7 +630,9 @@ class Worker:
 
                 # 🔴 DEBUG: Inspect layer 0 immediately after extraction
                 if True:  # Only on first step of first session
+                    
                     print(f"\n{'='*80}")
+                    print("@@@@ STEP ",step)
                     print(f"🔴 [LAYER 0 INSPECTION] session_id={session_id}, step={step}")
                     print(f"{'='*80}")
                     print(f"Type of session_past_kv: {type(session_past_kv)}")
