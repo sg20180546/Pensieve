@@ -500,9 +500,9 @@ class Worker:
                 # Check input KV cache (what we're passing to the model)
                 if step==0:
                     input_cache = session_cache 
-                    print("@@@@@@ STEP 0 Input cache = seession cache",session_cache)
+                    # print("@@@@@@ STEP 0 Input cache = seession cache",session_cache)
                 else:
-                    print("@@@@@@ STEP 1+ Input cache = seession cache",session_past_kv)
+                    # print("@@@@@@ STEP 1+ Input cache = seession cache",session_past_kv)
                     input_cache=session_past_kv
                 # print("!!!!!!! SJ input cache !!!",input_cache)
 
