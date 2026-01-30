@@ -1264,6 +1264,7 @@ class Worker:
 
             # ✅ DEBUG: Track chunk allocation
             logger.debug(f"[DEBUG _store_new_kv_chunks] session_id={session_id}, num_generated={num_generated}, fill_last={fill_last}, remaining_new={remaining_new}, last_chunk_id={last_chunk_id}, existing_positions={existing_positions}")
+            logger.debug(f"[DEBUG FILL_LAST] remaining_to_fill_last={remaining_to_fill_last}, last_chunk_size={last_chunk_size}, metadata_exists={metadata is not None}")
 
             # ✅ Calculate actual context_length considering metadata
             if metadata:
@@ -1348,10 +1349,12 @@ class Worker:
                         else:
                             logger.debug(f"✅ Token count matches: {tokens_stored} tokens stored")
 
+                        remaining_new_old = remaining_new
                         remaining_new = tokens_stored - fill_last
                         # Update total_tokens to reflect actual stored tokens
                         total_tokens = tokens_stored
                         total_chunks = (total_tokens + chunk_size - 1) // chunk_size
+                        logger.debug(f"[DEBUG TURN 1] Before recalc: remaining_new={remaining_new_old}, fill_last={fill_last}")
                         logger.debug(f"[DEBUG TURN 1] Recalculated: remaining_new={remaining_new}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
                 # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
@@ -1456,9 +1459,14 @@ class Worker:
                     remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, head_dim]
                     remaining_value = new_value[:, fill_last:, :, :]
 
-                if layer_idx == 0 and not existing_positions:
-                    logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: remaining_key.shape={remaining_key.shape}, fill_last={fill_last}, remaining_new={remaining_new}")
+                if layer_idx == 0:
+                    logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: new_key.shape={new_key.shape}, fill_last={fill_last}")
+                    logger.debug(f"[DEBUG CHUNKS] remaining_key.shape={remaining_key.shape}, remaining_new={remaining_new}")
                     logger.debug(f"[DEBUG CHUNKS] Will create {(remaining_new + chunk_size - 1) // chunk_size} chunks")
+                    if remaining_new == 0:
+                        logger.warning(f"⚠️ WARNING: remaining_new=0! No more chunks to create. fill_last={fill_last}, tokens_stored={self._get_seq_len_from_kv(new_key)}")
+                    if remaining_new > 0:
+                        logger.debug(f"[DEBUG CHUNKS] Slice details: seq_dim={seq_dim}, slicing new_key[:, :, {fill_last}:, :] or new_key[:, {fill_last}:, :, :]")
 
                 for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
                     # Calculate token range for this chunk
@@ -1477,6 +1485,9 @@ class Worker:
                         # Standard format: seq at dim=1
                         chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
                         chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
+
+                    if layer_idx == 0:
+                        logger.debug(f"[DEBUG CHUNK_EXTRACT] chunk_idx={chunk_idx}: extracted shape={chunk_key.shape}, seq_dim={seq_dim}")
 
                     # Determine chunk_id
                     chunk_id = next_chunk_id + chunk_idx
