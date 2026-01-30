@@ -594,6 +594,10 @@ class Worker:
                 # Forward pass - with session-specific cache
                 # print("@@@@@@@@@@@@@@@@@@@@ sj SJSJ input_cache",input_cache)
 
+                # ✅ DEBUG FORWARD INPUT: Log what we're passing to model
+                if step == 0 or (step > 0 and input_cache is not None):
+                    logger.debug(f"[PRE-FORWARD] Session {session_id}, Step {step}: step_input_ids.shape={step_input_ids.shape}, input_cache={'None' if input_cache is None else 'Present'}")
+
                 # 🔴 PRE-FORWARD CACHE VALIDATION: Find malformed chunks before model execution
                 if step == 0 and input_cache is not None and hasattr(input_cache, 'cache_manager'):
                     print("\n" + "="*80, flush=True)
@@ -652,11 +656,16 @@ class Worker:
                 # Check output KV cache (what the model produced)
                 if outputs.past_key_values is not None and len(outputs.past_key_values) > 0:
                     output_cache_len = self._get_seq_len_from_kv(outputs.past_key_values[0][0])
+                    output_k_shape = outputs.past_key_values[0][0].shape if outputs.past_key_values[0][0] is not None else None
                 else:
                     output_cache_len = 0
+                    output_k_shape = None
 
                 # Expected: input_cache_len + input_seq_len = output_cache_len
                 expected_len = input_cache_len + input_seq_len
+
+                # ✅ DEBUG: Log model output details
+                logger.debug(f"[POST-FORWARD] Session {session_id}, Step {step}: output_k.shape={output_k_shape}, output_cache_len={output_cache_len}, expected={expected_len}")
 
                 # ✅ DEBUG OUTPUT: Track KV cache growth (only when cache exists - multi-turn scenario)
                 # Skip: Step 0 (prefill) and first turn of any session (input_cache_len = 0)
@@ -1313,7 +1322,14 @@ class Worker:
                     new_tokens_start = 0
                 else:
                     # Turn 2+: Store only newly generated tokens
-                    new_tokens_start = total_seq_len - num_generated
+                    new_tokens_start = max(0, total_seq_len - num_generated)
+                    # ⚠️ CRITICAL DEBUG: If calculation resulted in negative, log it
+                    if total_seq_len < num_generated:
+                        logger.error(f"⚠️ WARNING: total_seq_len ({total_seq_len}) < num_generated ({num_generated})!")
+                        logger.error(f"   This means model output is smaller than expected. Check if cache was passed correctly.")
+                        logger.error(f"   Using new_tokens_start=0 (will store ALL tokens, may include cached)")
+                        # Store all tokens as fallback
+                        new_tokens_start = 0
 
                 # Extract tokens to store - use correct dimension based on tensor format
                 seq_dim = self._get_seq_dim_from_kv(k)
