@@ -7,12 +7,12 @@ import os
 import traceback
 
 # Try to import from transformers
-try:
-    from transformers import Cache
-except ImportError:
-    # Fallback if not available
-    Cache = object
-
+# try:
+#     from transformers import Cache
+# except ImportError:
+#     # Fallback if not available
+#     Cache = object
+from transformers import DynamicCache
 
 class PensieveCache(Cache):
     """Custom KV cache implementing HuggingFace Cache interface (layer-wise chunking).
