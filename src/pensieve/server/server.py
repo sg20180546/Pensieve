@@ -132,6 +132,18 @@ class PensieveServer:
 
             self._model.eval()
             print(f"Model loaded successfully on device(s)")
+
+            # ✅ DEBUG: Print model architecture details
+            print(f"\n{'='*80}")
+            print(f"[MODEL CONFIG]")
+            print(f"  Model type: {self._model.config.model_type}")
+            print(f"  Hidden size: {self._model.config.hidden_size}")
+            print(f"  Num attention heads: {self._model.config.num_attention_heads}")
+            print(f"  Num KV heads: {getattr(self._model.config, 'num_key_value_heads', 'N/A (not GQA)')}")
+            head_dim = self._model.config.hidden_size // self._model.config.num_attention_heads
+            print(f"  Head dimension: {head_dim}")
+            print(f"  Num hidden layers: {self._model.config.num_hidden_layers}")
+            print(f"{'='*80}\n")
         return self._model
 
     @property
