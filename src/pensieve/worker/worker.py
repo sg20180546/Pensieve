@@ -1077,10 +1077,10 @@ class Worker:
                         logger.debug(f"[DEBUG TURN 1] new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
 
                         # ✅ CRITICAL: Compare expected vs actual token counts
-                        if tokens_stored != expected_total_tokens:
-                            logger.error(f"❌ TOKEN LOSS DETECTED! Expected {expected_total_tokens} tokens ({input_len} input + {num_generated} generated) but model output has {tokens_stored} tokens. LOSS: {expected_total_tokens - tokens_stored} token(s)")
-                        else:
-                            logger.debug(f"✅ Token count matches: {tokens_stored} tokens stored")
+                        # if tokens_stored != expected_total_tokens:
+                        #     logger.error(f"❌ TOKEN LOSS DETECTED! Expected {expected_total_tokens} tokens ({input_len} input + {num_generated} generated) but model output has {tokens_stored} tokens. LOSS: {expected_total_tokens - tokens_stored} token(s)")
+                        # else:
+                        #     logger.debug(f"✅ Token count matches: {tokens_stored} tokens stored")
 
                         remaining_new_old = remaining_new
                         remaining_new = tokens_stored - fill_last
@@ -1106,8 +1106,8 @@ class Worker:
                     last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
                     last_chunk = self.cache.get_chunk(last_chunk_key)
                     
-                    if layer_idx == 0:
-                        logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
+                    # if layer_idx == 0:
+                    #     logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
 
                     if last_chunk:
                         # Extract tokens to fill last chunk (use correct dimension based on tensor format)
@@ -1147,11 +1147,11 @@ class Worker:
                         merged_value_gpu = merged_value.detach()
 
                         # ✅ VALIDATION: Check merged tensor dimensions BEFORE storing
-                        if layer_idx == 0:
-                            logger.debug(f"[MERGE VALIDATION] session_id={session_id}, chunk_id={last_chunk_id}:")
-                            logger.debug(f"  last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
-                            logger.debug(f"  fill_key.shape={fill_key.shape}")
-                            logger.debug(f"  merged_key_gpu.shape={merged_key_gpu.shape}")
+                        # if layer_idx == 0:
+                            # logger.debug(f"[MERGE VALIDATION] session_id={session_id}, chunk_id={last_chunk_id}:")
+                            # logger.debug(f"  last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
+                            # logger.debug(f"  fill_key.shape={fill_key.shape}")
+                            # logger.debug(f"  merged_key_gpu.shape={merged_key_gpu.shape}")
 
                         # Check for malformed tensors
                         if len(merged_key_gpu.shape) != 4:
