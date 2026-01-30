@@ -455,7 +455,9 @@ class Worker:
                     # ✅ CRITICAL FIX: When reusing cache from previous turn, attention_mask must cover ALL tokens
                     # Turn 1: session_cache=None, mask covers input only (correct)
                     # Turn 2+: session_cache has cached KV, mask must be None (model auto-extends)
-                    if session_cache is not None and not session_cache.is_empty():
+                    is_cache_empty = session_cache.is_empty() if session_cache is not None else True
+                    print(f"[DEBUG] {session_id}: session_cache={session_cache is not None}, is_empty()={is_cache_empty}")
+                    if session_cache is not None and not is_cache_empty:
                         # Turn 2+: Cache exists, let model handle attention for cached + new tokens
                         step_attention_mask = None
                     else:
@@ -551,14 +553,14 @@ class Worker:
                 # print(input_cache)
                 
                 # 🔴 DEBUG: Check what we're passing as past_key_values
-                # if step == 0:  # Only on first step
-                #     cache_type = type(input_cache).__name__ if input_cache is not None else "None"
-                #     cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
-                #     print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
-                #     print(f"  type: {cache_type}", flush=True)
-                #     print(f"  len: {cache_len}", flush=True)
-                #     print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
-                #     print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
+                if step == 0:  # Only on first step
+                    cache_type = type(input_cache).__name__ if input_cache is not None else "None"
+                    cache_len = len(input_cache) if input_cache is not None and hasattr(input_cache, '__len__') else "?"
+                    print(f"\n🔴 [FORWARD PASS] Passing past_key_values:", flush=True)
+                    print(f"  type: {cache_type}", flush=True)
+                    print(f"  len: {cache_len}", flush=True)
+                    print(f"  is PensieveCache: {hasattr(input_cache, 'cache_manager')}", flush=True)
+                    print(f"  has __getitem__: {hasattr(input_cache, '__getitem__')}", flush=True)
 
                 #     # ✅ VALIDATION: If using PensieveCache, verify chunks exist and have correct shapes
                 #     if input_cache is not None and hasattr(input_cache, 'cache_manager'):
@@ -629,31 +631,31 @@ class Worker:
                 session_past_kv = outputs.past_key_values
 
                 # 🔴 DEBUG: Inspect layer 0 immediately after extraction
-                if True:  # Only on first step of first session
+                # if True:  # Only on first step of first session
                     
-                    print(f"\n{'='*80}")
-                    print("@@@@ STEP ",step)
-                    print(f"🔴 [LAYER 0 INSPECTION] session_id={session_id}, step={step}")
-                    print(f"{'='*80}")
-                    print(f"Type of session_past_kv: {type(session_past_kv)}")
-                    print(f"Length of session_past_kv: {len(session_past_kv) if hasattr(session_past_kv, '__len__') else 'N/A'}")
+                #     print(f"\n{'='*80}")
+                #     print("@@@@ STEP ",step)
+                #     print(f"🔴 [LAYER 0 INSPECTION] session_id={session_id}, step={step}")
+                #     print(f"{'='*80}")
+                #     print(f"Type of session_past_kv: {type(session_past_kv)}")
+                #     print(f"Length of session_past_kv: {len(session_past_kv) if hasattr(session_past_kv, '__len__') else 'N/A'}")
 
-                    if len(session_past_kv) > 0:
-                        print(f"\nAccessing layer 0:")
-                        try:
-                            layer_0 = session_past_kv[0]
-                            print(f"  Type: {type(layer_0)}")
+                #     if len(session_past_kv) > 0:
+                #         print(f"\nAccessing layer 0:")
+                #         try:
+                #             layer_0 = session_past_kv[0]
+                #             print(f"  Type: {type(layer_0)}")
 
-                            if isinstance(layer_0, tuple) and len(layer_0) >= 2:
-                                k0, v0 = layer_0[0], layer_0[1]
-                                print(f"  k0: type={type(k0)}, shape={k0.shape if k0 is not None else 'None'}, is_none={k0 is None}")
-                                print(f"  v0: type={type(v0)}, shape={v0.shape if v0 is not None else 'None'}, is_none={v0 is None}")
-                            else:
-                                print(f"  ⚠️ Layer 0 is not a tuple or doesn't have (k,v): {layer_0}")
-                        except Exception as e:
-                            print(f"  ❌ Error accessing layer 0: {e}")
+                #             if isinstance(layer_0, tuple) and len(layer_0) >= 2:
+                #                 k0, v0 = layer_0[0], layer_0[1]
+                #                 print(f"  k0: type={type(k0)}, shape={k0.shape if k0 is not None else 'None'}, is_none={k0 is None}")
+                #                 print(f"  v0: type={type(v0)}, shape={v0.shape if v0 is not None else 'None'}, is_none={v0 is None}")
+                #             else:
+                #                 print(f"  ⚠️ Layer 0 is not a tuple or doesn't have (k,v): {layer_0}")
+                #         except Exception as e:
+                #             print(f"  ❌ Error accessing layer 0: {e}")
 
-                    print(f"{'='*80}\n")
+                #     print(f"{'='*80}\n")
 
                 # ✅ DEBUG: Track KV cache shape at each step to find where token is lost
                 # if session_past_kv and len(session_past_kv) > 0:
