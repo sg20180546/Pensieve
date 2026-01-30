@@ -1179,7 +1179,10 @@ class Worker:
             logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
             # Process each layer and split into 32-token chunks
-            for layer_idx, (k, v) in enumerate(past_key_values):
+            # for layer_idx, (k, v) in enumerate(past_key_values):
+            print("len(past_key_values)",len(past_key_values))
+            for layer_idx in range(len(past_key_values)):
+                k, v = past_key_values[layer_idx]
                 if k is None or v is None:
                     print("@@@ error kv none",layer_idx)
                     continue
