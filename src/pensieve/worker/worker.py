@@ -117,7 +117,7 @@ class Worker:
         """
         if kv_tensor is None or len(kv_tensor.shape) < 4:
             return 1  # Default
-
+        # [batch_size, num_heads, seq_length, head_dim]
         shape = kv_tensor.shape
         # Heuristic: if dim[1] is small (num_heads typically 8-128), then dim=2 is seq
         if shape[1] < 256:  # shape[1] is likely num_heads
@@ -1154,9 +1154,12 @@ class Worker:
 
                 total_seq_this_layer = 0
                 for chunk in layer_chunks:
-                    seq_len = chunk.key_tensor.shape[1] if chunk.key_tensor.dim() == 4 else 0
-                    if seq_len == 0 and chunk.key_tensor.dim() == 4:
-                        seq_len = chunk.key_tensor.shape[2] if chunk.key_tensor.shape[1] < 256 else chunk.key_tensor.shape[1]
+                    # Llama format: [batch, num_heads, seq, head_dim]
+                    # seq is at shape[2], NOT shape[1]
+                    if chunk.key_tensor.dim() == 4:
+                        seq_len = chunk.key_tensor.shape[2]  # ✅ FIX: seq at dim 2
+                    else:
+                        seq_len = 0
                     total_seq_this_layer += seq_len
 
                     print(f"    Chunk({chunk.session_id}, {chunk.chunk_id}): k.shape={chunk.key_tensor.shape}, seq={seq_len}", flush=True)

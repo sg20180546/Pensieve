@@ -367,18 +367,30 @@ class PensieveCache(DynamicCache):
 
         # Cache for this forward pass
         self._layer_kv_cache[layer_idx] = (keys, values)
+
         # ✅ FIX: Detect tensor format correctly for both Gemma and Llama
         # Gemma-2: [batch, heads, seq, head_dim] → seq at dim=2
-        # Llama: [batch, seq, heads, head_dim] → seq at dim=1
-        if len(keys.shape) == 4 and keys.shape[1] < 256:
-            self._seq_length = keys.shape[2]  # Gemma format
+        # Llama: [batch, heads, seq, head_dim] → seq at dim=2 (heads at dim=1, which is small)
+        # Standard: [batch, seq, heads, head_dim] → seq at dim=1 (seq at dim=1, which is large)
+        if keys is not None and len(keys.shape) == 4 and keys.shape[1] < 256:
+            # shape[1] is small → likely num_heads → seq is at dim=2 (Gemma/Llama format)
+            self._seq_length = keys.shape[2]
+        elif keys is not None:
+            # shape[1] is large → likely seq → seq is at dim=1 (Standard format)
+            self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0
         else:
-            self._seq_length = keys.shape[1] if len(keys.shape) > 1 else 0  # Llama or others
-        if keys.numel() == 0:
-            print(f"!!! CRITICAL: Layer {layer_idx} is returning an EMPTY tensor!")
-            # 여기서 강제로 에러를 내면 traceback에 __getitem__이 찍힙니다.
-            raise ValueError("Empty KV Cache detected")
-        print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
+            # No cache for this layer
+            self._seq_length = 0
+
+        if keys is not None:
+            if keys.numel() == 0:
+                print(f"!!! CRITICAL: Layer {layer_idx} is returning an EMPTY tensor!")
+                # 여기서 강제로 에러를 내면 traceback에 __getitem__이 찍힙니다.
+                raise ValueError("Empty KV Cache detected")
+            print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: keys.shape={keys.shape}, values.shape={values.shape}\n")
+        else:
+            print(f"[CACHE_DEBUG] __getitem__ RETURNING layer_idx={layer_idx}: (None, None)\n")
+
         return keys, values
 
     def is_empty(self) -> bool:
