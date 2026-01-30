@@ -318,6 +318,30 @@ class PensieveCache(DynamicCache):
             values = torch.cat(all_values, dim=seq_dim)
             print(f"[CACHE_DEBUG] Result: keys.shape={keys.shape}, values.shape={values.shape}\n")
 
+            # 🔴 CRITICAL: Check if seq_length matches expected token count
+            if layer_idx == 0:
+                actual_seq_len = keys.shape[seq_dim]
+                print(f"\n[SEQ_LENGTH_CHECK] Layer {layer_idx}:", flush=True)
+                print(f"  Chunks provided: {len(all_keys)}", flush=True)
+                print(f"  Concatenation dimension: {seq_dim}", flush=True)
+                print(f"  Actual seq_length in result: {actual_seq_len}", flush=True)
+
+                # Calculate expected seq_length from chunks
+                expected_seq = sum(k.shape[seq_dim] for k in all_keys)
+                print(f"  Expected seq_length (sum of chunks): {expected_seq}", flush=True)
+
+                if actual_seq_len != expected_seq:
+                    print(f"  ❌ MISMATCH! {actual_seq_len} != {expected_seq}", flush=True)
+                else:
+                    print(f"  ✅ Match!", flush=True)
+
+                # Print each chunk's seq_length
+                print(f"  Individual chunk seq_lengths:", flush=True)
+                for idx, k in enumerate(all_keys):
+                    chunk_seq = k.shape[seq_dim]
+                    print(f"    Chunk {idx}: seq={chunk_seq}, full_shape={k.shape}", flush=True)
+                print()
+
             # ✅ VALIDATION: After concatenation, verify result is valid
             if keys.shape[-1] == 0:
                 print(f"❌ CRITICAL: Concatenated keys has head_dim=0! Shape: {keys.shape}")
