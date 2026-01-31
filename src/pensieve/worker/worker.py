@@ -715,7 +715,6 @@ class Worker:
                 # ✅ Debug: Print session's all chunks status
                 # self.cache.print_session_chunks_status(session_id)
                 # ✅ Debug: Print all sessions status
-                self.cache.print_all_sessions_status()
 
                 if not swap_success:
                     # Swap failed - check if it's recoverable
@@ -736,7 +735,8 @@ class Worker:
                         # Retry with exponential backoff
                         retry_count += 1
                         if retry_count % 100 == 0:
-                            self.cache.print_session_chunks_status(session_id)
+                            # self.cache.print_session_chunks_status(session_id)
+                            self.cache.print_all_sessions_status()
 
                             print(f"  Retrying swap_in for {chunk_key} (attempt {retry_count}/{max_retries})")
 
