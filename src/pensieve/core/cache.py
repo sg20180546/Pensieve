@@ -527,7 +527,7 @@ class TwoTierCache:
         """
         if chunk_key not in self.cpu_cache:
             return False
-        print("swap_chunk_to_gpu", chunk_key)
+        # print("swap_chunk_to_gpu", chunk_key)
         chunk = self.cpu_cache[chunk_key]  # ✅ Don't pop yet - peek only
         chunk_size = chunk.size_bytes
 
@@ -536,7 +536,7 @@ class TwoTierCache:
             freed = self._evict_to_free_space(chunk_size, CacheLocation.GPU)
             if freed < chunk_size:
                 # GPU still doesn't have enough space
-                print(f"Warning: Could not free enough GPU space for chunk {chunk_key} - keeping in CPU")
+                # print(f"Warning: Could not free enough GPU space for chunk {chunk_key} - keeping in CPU")
                 return False  # ✅ Return False, don't move chunk
 
         # Now we can safely move to GPU
