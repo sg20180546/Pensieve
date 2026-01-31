@@ -323,15 +323,20 @@ class PensieveCache(DynamicCache):
 
         max_tokens = 0
 
+        # ✅ SNAPSHOT: Create local copies of cache dicts to avoid iteration
+        # during modification by other threads (eviction can occur concurrently)
+        gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
+        cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
+        cache_dicts = [gpu_cache_snapshot, cpu_cache_snapshot]
+
         # Try method 1: Use batch_info positions if available
-        for request_id, request_info in self.batch_info.items():
+        for request_info in self.batch_info.values():
             positions = request_info.get('positions', [])
             if positions:
                 max_chunk_id = max(positions)
                 session_id = request_info.get('session_id')
                 # Find actual size of last chunk
-                for cache_dict in [self.cache_manager.gpu_cache,
-                                  self.cache_manager.cpu_cache]:
+                for cache_dict in cache_dicts:
                     for chunk in cache_dict.values():
                         if (chunk.session_id == session_id and
                             chunk.chunk_id == max_chunk_id):
@@ -346,7 +351,7 @@ class PensieveCache(DynamicCache):
             # Get session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
             # Scan all chunks for these sessions
-            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+            for cache_dict in cache_dicts:
                 for chunk in cache_dict.values():
                     if chunk.session_id in session_ids:
                         # Found a chunk for this session
