@@ -290,6 +290,7 @@ class TwoTierCache:
         return sorted(list(positions))
 
     def pin_session(self, session_id: str) -> None:
+        print("@@@@@ pin_session ",session_id)
         """Pin all chunks of a session to prevent eviction.
 
         Called when a batch execution starts to protect the session's chunks
