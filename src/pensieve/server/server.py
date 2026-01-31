@@ -739,7 +739,7 @@ Active Sessions: {len(self.active_sessions)}
                 break
             except:  # Queue.Empty
                 break
-        print("batch len",len(batch))
+        # print("batch len",len(batch))
         return batch
 
     def _execute_batch_async(self, batch_requests: List[Dict]):
