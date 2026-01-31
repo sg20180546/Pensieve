@@ -526,6 +526,7 @@ class TwoTierCache:
             True if successful, False if GPU still full (chunk stays in CPU)
         """
         if chunk_key not in self.cpu_cache:
+            print("WHY@@@@@ swap_chunk_to_gpu")
             return False
         # print("swap_chunk_to_gpu", chunk_key)
         chunk = self.cpu_cache[chunk_key]  # ✅ Don't pop yet - peek only
