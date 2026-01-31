@@ -709,7 +709,7 @@ class Worker:
 
             while not swap_success:
                 # Try to swap chunk to GPU
-                print("SWAP to gpu CHUNK STAET")
+                print("SWAP to gpu CHUNK START")
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
 
                 if not swap_success:
@@ -719,7 +719,8 @@ class Worker:
 
                     if session_total_size > gpu_capacity:
                         # Session's total chunks exceed GPU capacity - fatal error
-                        raise RuntimeError(
+                        print("RuntimeError@@@@@@@@")
+                        print(
                             f"Fatal: Session {session_id} requires {session_total_size / 1024**3:.2f}GB "
                             f"but GPU capacity is only {gpu_capacity / 1024**3:.2f}GB. "
                             f"Cannot fit all chunks in GPU. Increase --gpu-cache or reduce workload."
