@@ -508,9 +508,9 @@ class TwoTierCache:
 
             # IMPORTANT: Skip pinned chunks (cannot evict while being executed)
             if self.is_pinned(chunk_key):
-                # print("reason pin")
+                print("reason pin")
                 continue
-
+            print("ok i am evicted",chunk_key)
             chunk = cache.pop(chunk_key)
             freed += chunk.size_bytes
 
