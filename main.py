@@ -32,6 +32,7 @@ import sys
 import os
 import time
 import torch
+import random
 import threading
 from queue import Queue
 from collections import defaultdict
@@ -289,7 +290,12 @@ def concurrent_client_worker(
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
     print("HELLO I am ",session_id)
-    time.sleep(request_interval)
+    # time.sleep(request_interval)
+    wait_time = random.uniform(0, 10)
+
+    # print(f"{wait_time:.2f}초 동안 대기합니다...")
+    time.sleep(wait_time)
+    # print("대기 완료!")
     for turn_idx, user_input in enumerate(conversations):
         # Wait before sending next request
         if turn_idx > 0:
