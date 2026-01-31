@@ -126,8 +126,8 @@ def main():
     parser.add_argument(
         "--num-concurrent-users",
         type=int,
-        default=1,
-        help="Number of concurrent users for benchmark (default: 1). Only used with --mode compare.",
+        default=3,
+        help="Number of concurrent users for benchmark (default: 3)",
     )
 
     parser.add_argument(
@@ -136,25 +136,21 @@ def main():
         default=0.5,
         help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
     )
+
     parser.add_argument(
-        "--max_turns",
+        "--max-turns",
         type=int,
         default=5,
-        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
+        help="Maximum number of turns per conversation (default: 5)",
     )
+
     parser.add_argument(
-        "--min_turns",
+        "--min-turns",
         type=int,
         default=5,
-        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
+        help="Minimum number of turns per conversation (default: 5)",
     )
-    parser.add_argument(
-        "--num_concurrent_users",
-        type=int,
-        default=3,
-        help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
-    )
-        
+
     args = parser.parse_args()
 
     # Print configuration
