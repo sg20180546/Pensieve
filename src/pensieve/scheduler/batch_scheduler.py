@@ -208,7 +208,7 @@ class BatchScheduler:
                     evicted = self.cache.eviction_policy.select_chunks_to_evict(
                         list(self.cache.gpu_cache.values()), evict_amount, cache=self.cache
                     )
-                    print(evicted)
+                    # print(evicted)
                     chunks_to_swap_out.extend(evicted)
                     chunks_to_swap_in.append(chunk_key)
 
