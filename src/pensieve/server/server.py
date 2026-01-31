@@ -736,6 +736,7 @@ Active Sessions: {len(self.active_sessions)}
             try:
                 req_data = self.async_request_queue.get(timeout=timeout)
                 batch.append(req_data)
+                break
             except:  # Queue.Empty
                 break
 
