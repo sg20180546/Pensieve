@@ -312,6 +312,7 @@ class TwoTierCache:
         Args:
             session_id: Session ID to unpin
         """
+        print("unpin session",session_id)
         self.pinned_sessions.discard(session_id)
         if session_id in self.session_chunks:
             for chunk_key in self.session_chunks[session_id]:
@@ -493,17 +494,20 @@ class TwoTierCache:
         eviction_candidates = self.eviction_policy.select_chunks_to_evict(
             chunks_to_rank, required_bytes, cache=self
         )
-
+        print("eviction_candidates")
+        print(eviction_candidates)
         # Evict chunks in order (skip pinned chunks)
         for chunk_key in eviction_candidates:
             if freed >= required_bytes:
                 break
 
             if chunk_key not in cache:
+                # print("")
                 continue
 
             # IMPORTANT: Skip pinned chunks (cannot evict while being executed)
             if self.is_pinned(chunk_key):
+                # print("reason pin")
                 continue
 
             chunk = cache.pop(chunk_key)
