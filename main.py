@@ -138,12 +138,12 @@ def main():
         help="Time interval (seconds) between consecutive requests from each user (default: 0.5)",
     )
 
-    parser.add_argument(
-        "--max-turns",
-        type=int,
-        default=5,
-        help="Maximum number of turns per conversation (default: 5)",
-    )
+    # parser.add_argument(
+    #     "--max-turns",
+    #     type=int,
+    #     default=5,
+    #     help="Maximum number of turns per conversation (default: 5)",
+    # )
 
     parser.add_argument(
         "--min-turns",
