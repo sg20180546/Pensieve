@@ -873,11 +873,14 @@ class TwoTierCache:
             Total size in bytes
         """
         total_size = 0
-        if session_id in self.session_chunks:
-            for chunk_key in self.session_chunks[session_id]:
+        total_cache =[self.gpu_cache, self.cpu_cache, self.dropped_chunks]:
+        total_session=self.session_chunks[session_id]
+        session_chunks= self.session_chunks
+        if session_id in session_chunks:
+            for chunk_key in total_cache:
                 chunk = None
                 # Search in all tiers
-                for cache_dict in [self.gpu_cache, self.cpu_cache, self.dropped_chunks]:
+                for cache_dict in total_cache:
                     if chunk_key in cache_dict:
                         chunk = cache_dict[chunk_key]
                         break
