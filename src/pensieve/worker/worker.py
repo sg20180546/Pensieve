@@ -692,7 +692,7 @@ class Worker:
         # 1. Swap out chunks first (GPU → CPU)
         for chunk_key in cache_plan.chunks_to_swap_out:
             try:
-                self.cache.evict_to_cpu(chunk_key)
+                self.cache.swap_chunk_to_cpu(chunk_key)
             except Exception as e:
                 print(f"Warning: Failed to evict {chunk_key}: {e}")
 
