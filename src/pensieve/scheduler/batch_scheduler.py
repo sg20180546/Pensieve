@@ -193,22 +193,31 @@ class BatchScheduler:
         total_evict_amount = 0
         chunks_needing_space = []  # List of (chunk_key, chunk, needed_size)
 
+        # PHASE 1: Snapshot cache state (quick, under lock)
+        with self.cache.cache_lock:
+            cpu_cache_snapshot = dict(self.cache.cpu_cache)
+            gpu_cache_snapshot = dict(self.cache.gpu_cache)
+            dropped_chunks_snapshot = dict(self.cache.dropped_chunks)
+            gpu_used_bytes = self.cache.gpu_used_bytes
+            gpu_capacity_bytes = self.cache.gpu_capacity_bytes
+
+        # PHASE 2: Analyze and plan (no lock, heavy computation)
         # First pass: identify all chunks that need GPU space
         for chunk_key in chunks_in_cpu:
-            chunk = self.cache.cpu_cache.get(chunk_key)
+            chunk = cpu_cache_snapshot.get(chunk_key)
             if chunk:
                 # Check if chunk size fits in GPU
                 if (
-                    self.cache.gpu_used_bytes + chunk.size_bytes
-                    <= self.cache.gpu_capacity_bytes
+                    gpu_used_bytes + chunk.size_bytes
+                    <= gpu_capacity_bytes
                 ):
                     # GPU has space, can swap in immediately
                     chunks_to_swap_in.append(chunk_key)
                 else:
                     # GPU is full, this chunk needs space to be freed
                     evict_amount = (
-                        self.cache.gpu_used_bytes + chunk.size_bytes
-                        - self.cache.gpu_capacity_bytes
+                        gpu_used_bytes + chunk.size_bytes
+                        - gpu_capacity_bytes
                     )
                     chunks_needing_space.append((chunk_key, chunk, evict_amount))
                     total_evict_amount += evict_amount
@@ -217,7 +226,7 @@ class BatchScheduler:
         if chunks_needing_space and total_evict_amount > 0:
             # ✅ Evict only once based on cumulative need, not per-chunk
             evicted = self.cache.eviction_policy.select_chunks_to_evict(
-                list(self.cache.gpu_cache.values()), total_evict_amount*1.01, cache=self.cache
+                list(gpu_cache_snapshot.values()), total_evict_amount*1.01, cache=self.cache
             )
             chunks_to_swap_out.extend(evicted)
 
@@ -233,7 +242,7 @@ class BatchScheduler:
         # 4. Identify dropped chunks needing recovery
         dropped_chunks = {
             key: chunk
-            for key, chunk in self.cache.dropped_chunks.items()
+            for key, chunk in dropped_chunks_snapshot.items()
             if key in chunks_needed
         }
         # Store dropped chunk info for worker to handle recovery
@@ -248,8 +257,11 @@ class BatchScheduler:
                     cache_plan.chunks_to_recompute[session_id] = []
                 cache_plan.chunks_to_recompute[session_id].append(chunk_key)
         # print(chunks_needed)
-        print("gpu_used_bytes ",self.cache.gpu_used_bytes)
-        print("cpu_used_bytes ",self.cache.cpu_used_bytes)
+        # Use snapshotted values to avoid race condition
+        print("gpu_used_bytes ", gpu_used_bytes)
+        with self.cache.cache_lock:
+            cpu_used_bytes = self.cache.cpu_used_bytes
+        print("cpu_used_bytes ", cpu_used_bytes)
         print("chunks_already_in",len(chunks_needed)-len(cache_plan.chunks_to_swap_in)-len(cache_plan.chunks_to_recompute))
         # print("chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         # print("cache_plan.chunks_to_swap_in")

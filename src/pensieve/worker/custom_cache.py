@@ -75,11 +75,16 @@ class PensieveCache(DynamicCache):
             session_id = request_info.get('session_id')
             positions = request_info.get('positions', [])  # chunk_ids
 
+            # Snapshot caches to avoid iteration race conditions (quick, under lock)
+            with self.cache_manager.cache_lock:
+                gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
+                cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
+
             # Gather chunks for this layer at all positions in order
             for position in sorted(positions):
                 # Search for chunk at (session_id, position, layer_idx)
                 chunk_found = False
-                for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                for cache_dict in [gpu_cache_snapshot, cpu_cache_snapshot]:
                     for chunk in cache_dict.values():
                         if (chunk.session_id == session_id and
                             chunk.chunk_id == position and
@@ -100,9 +105,14 @@ class PensieveCache(DynamicCache):
             # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
+            # Snapshot caches (quick, under lock)
+            with self.cache_manager.cache_lock:
+                gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
+                cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
+
             # Collect all chunks for these sessions and this layer, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
-            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+            for cache_dict in [gpu_cache_snapshot, cpu_cache_snapshot]:
                 for chunk in cache_dict.values():
                     if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
                         key = (chunk.session_id, chunk.chunk_id)

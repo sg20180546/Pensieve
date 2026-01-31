@@ -146,10 +146,11 @@ class Worker:
             report.append("⚠️  pensieve_cache is empty (no chunks stored)")
             return "\n".join(report)
 
-        # 1. Get all chunks for this session from cache manager
+        # 1. Get snapshots of caches (quick, under lock)
         try:
-            gpu_cache = pensieve_cache.cache_manager.gpu_cache
-            cpu_cache = pensieve_cache.cache_manager.cpu_cache
+            with pensieve_cache.cache_manager.cache_lock:
+                gpu_cache = dict(pensieve_cache.cache_manager.gpu_cache)
+                cpu_cache = dict(pensieve_cache.cache_manager.cpu_cache)
 
             report.append(f"\n📊 Cache Storage Status:")
             report.append(f"   GPU cache size: {len(gpu_cache)} chunks")
