@@ -197,6 +197,7 @@ class BatchScheduler:
                 ):
                     chunks_to_swap_in.append(chunk_key)
                 else:
+                    print("needs to be evicted")
                     # GPU is full, need to evict something first
                     # Plan to evict the least valuable chunks
                     evict_amount = (
@@ -207,6 +208,7 @@ class BatchScheduler:
                     evicted = self.cache.eviction_policy.select_chunks_to_evict(
                         list(self.cache.gpu_cache.values()), evict_amount, cache=self.cache
                     )
+                    print(evicted)
                     chunks_to_swap_out.extend(evicted)
                     chunks_to_swap_in.append(chunk_key)
 

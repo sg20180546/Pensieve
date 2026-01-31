@@ -399,6 +399,7 @@ class TwoTierCache:
         Returns:
             True if successful
         """
+        print("swap_chunk_to_cpu" ,chunk_key)
         if chunk_key not in self.gpu_cache:
             return False
 
@@ -436,7 +437,7 @@ class TwoTierCache:
         """
         if chunk_key not in self.cpu_cache:
             return False
-
+        print("swap_chunk_to_gpu", chunk_key)
         chunk = self.cpu_cache.pop(chunk_key)
         chunk_size = chunk.size_bytes
 
