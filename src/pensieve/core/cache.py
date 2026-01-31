@@ -525,6 +525,7 @@ class TwoTierCache:
         Returns:
             True if successful, False if GPU still full (chunk stays in CPU)
         """
+        print("swap_chunk_to_gpu",chunk_key)
         if chunk_key not in self.cpu_cache:
             print("WHY@@@@@ swap_chunk_to_gpu")
             return False
@@ -548,6 +549,8 @@ class TwoTierCache:
         self.gpu_used_bytes += chunk_size
 
         self._update_statistics()
+        print("swap_chunk_to_gpu return",chunk_key)
+
         return True
 
     def _evict_to_free_space(self, required_bytes: int, location: CacheLocation) -> int:

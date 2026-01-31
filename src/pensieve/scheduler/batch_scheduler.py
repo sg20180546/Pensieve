@@ -200,7 +200,7 @@ class BatchScheduler:
                 ):
                     chunks_to_swap_in.append(chunk_key)
                 else:
-                    print("needs to be evicted")
+                    # print("needs to be evicted")
                     # GPU is full, need to evict something first
                     # Plan to evict the least valuable chunks
                     evict_amount = (

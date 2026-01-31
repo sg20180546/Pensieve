@@ -689,13 +689,14 @@ class Worker:
             cache_plan: Cache operations to execute
             batch: Current batch (needed for recovery)
         """
+        print("_execute_cache_plan")
         # 1. Swap out chunks first (GPU → CPU)
         for chunk_key in cache_plan.chunks_to_swap_out:
             try:
                 self.cache.swap_chunk_to_cpu(chunk_key)
             except Exception as e:
                 print(f"Warning: Failed to evict {chunk_key}: {e}")
-
+        print("SWAP OUT DONE")
         # 2. Swap in chunks (CPU → GPU) with cascade retry logic
         for chunk_key in cache_plan.chunks_to_swap_in:
             # Extract session_id from chunk_key (format: "session:chunk:id:layer:idx")
@@ -708,6 +709,7 @@ class Worker:
 
             while not swap_success:
                 # Try to swap chunk to GPU
+                print("SWAP to gpu CHUNK STAET")
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
 
                 if not swap_success:
@@ -735,7 +737,7 @@ class Worker:
                     f"Failed to swap in {chunk_key} after {max_retries} attempts. "
                     f"GPU cache may be fragmented or permanently full."
                 )
-
+        print("SWAP IN DONE")
         # 3. ✅ Batch-level recovery with full context dependency
         # BatchedRecoveryManager handles multiple sessions efficiently,
         # respecting both layer-wise and token-wise dependencies
