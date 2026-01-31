@@ -873,7 +873,7 @@ class TwoTierCache:
             Total size in bytes
         """
         total_size = 0
-        total_cache =[self.gpu_cache, self.cpu_cache, self.dropped_chunks]:
+        total_cache =[self.gpu_cache, self.cpu_cache, self.dropped_chunks]
         total_session=self.session_chunks[session_id]
         session_chunks= self.session_chunks
         if session_id in session_chunks:
