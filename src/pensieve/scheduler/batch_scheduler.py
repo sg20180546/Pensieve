@@ -189,31 +189,41 @@ class BatchScheduler:
 
         # Priority: Swap in chunks that will be used in this batch
         # For now, swap in all CPU chunks that are needed
+        # ✅ OPTIMIZATION: Accumulate all eviction needs, then decide once
+        total_evict_amount = 0
+        chunks_needing_space = []  # List of (chunk_key, chunk, needed_size)
+
+        # First pass: identify all chunks that need GPU space
         for chunk_key in chunks_in_cpu:
-            # Check if chunk size fits in GPU
             chunk = self.cache.cpu_cache.get(chunk_key)
             if chunk:
-                # Only swap in if GPU has space
+                # Check if chunk size fits in GPU
                 if (
                     self.cache.gpu_used_bytes + chunk.size_bytes
                     <= self.cache.gpu_capacity_bytes
                 ):
+                    # GPU has space, can swap in immediately
                     chunks_to_swap_in.append(chunk_key)
                 else:
-                    # print("needs to be evicted")
-                    # GPU is full, need to evict something first
-                    # Plan to evict the least valuable chunks
+                    # GPU is full, this chunk needs space to be freed
                     evict_amount = (
                         self.cache.gpu_used_bytes + chunk.size_bytes
                         - self.cache.gpu_capacity_bytes
                     )
-                    # ✅ Pass cache=self.cache to ensure SessionMetadata is used
-                    evicted = self.cache.eviction_policy.select_chunks_to_evict(
-                        list(self.cache.gpu_cache.values()), evict_amount, cache=self.cache
-                    )
-                    # print(evicted)
-                    chunks_to_swap_out.extend(evicted)
-                    chunks_to_swap_in.append(chunk_key)
+                    chunks_needing_space.append((chunk_key, chunk, evict_amount))
+                    total_evict_amount += evict_amount
+
+        # Second pass: if any chunks need space, evict ONCE based on total need
+        if chunks_needing_space and total_evict_amount > 0:
+            # ✅ Evict only once based on cumulative need, not per-chunk
+            evicted = self.cache.eviction_policy.select_chunks_to_evict(
+                list(self.cache.gpu_cache.values()), total_evict_amount, cache=self.cache
+            )
+            chunks_to_swap_out.extend(evicted)
+
+            # Now add all chunks that need space to swap_in
+            for chunk_key, chunk, _ in chunks_needing_space:
+                chunks_to_swap_in.append(chunk_key)
 
         # 3. Build cache plan
         cache_plan.chunks_to_swap_in = chunks_to_swap_in
