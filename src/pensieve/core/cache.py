@@ -499,6 +499,7 @@ class TwoTierCache:
                 self.dropped_chunks[chunk_key] = chunk
                 chunk.location = CacheLocation.DROPPED
                 self.gpu_used_bytes -= chunk_size
+                print("WHY FAILE?? swap_chunk_to_cpu")
                 self._update_statistics()
                 return False
 

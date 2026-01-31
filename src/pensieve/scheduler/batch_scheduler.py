@@ -217,7 +217,7 @@ class BatchScheduler:
         if chunks_needing_space and total_evict_amount > 0:
             # ✅ Evict only once based on cumulative need, not per-chunk
             evicted = self.cache.eviction_policy.select_chunks_to_evict(
-                list(self.cache.gpu_cache.values()), total_evict_amount, cache=self.cache
+                list(self.cache.gpu_cache.values()), total_evict_amount*1.01, cache=self.cache
             )
             chunks_to_swap_out.extend(evicted)
 
