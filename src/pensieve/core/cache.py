@@ -866,6 +866,9 @@ class TwoTierCache:
         Calculates the total memory requirement for a session across
         GPU, CPU, and DROPPED tiers.
 
+        Thread-safe: Creates snapshots to avoid iteration issues during
+        concurrent eviction/removal by other threads.
+
         Args:
             session_id: Session ID
 
@@ -873,17 +876,27 @@ class TwoTierCache:
             Total size in bytes
         """
         total_size = 0
-        total_cache =[self.gpu_cache, self.cpu_cache, self.dropped_chunks]
-        total_session=self.session_chunks[session_id]
-        session_chunks= self.session_chunks
-        if session_id in session_chunks:
-            for chunk_key in total_cache:
-                chunk = None
-                # Search in all tiers
-                for cache_dict in total_cache:
-                    if chunk_key in cache_dict:
-                        chunk = cache_dict[chunk_key]
-                        break
-                if chunk:
-                    total_size += chunk.size_bytes
+
+        # ✅ SNAPSHOT: Create local copy of chunk_keys to avoid iteration issues
+        # during concurrent eviction by other threads
+        chunk_keys = []
+        if session_id in self.session_chunks:
+            chunk_keys = self.session_chunks[session_id][:]  # Shallow copy of list
+
+        # ✅ SNAPSHOT: Create local copies of all cache dicts
+        gpu_cache_snapshot = dict(self.gpu_cache)
+        cpu_cache_snapshot = dict(self.cpu_cache)
+        dropped_chunks_snapshot = dict(self.dropped_chunks)
+
+        # Now search in snapshots (safe from concurrent modifications)
+        for chunk_key in chunk_keys:
+            chunk = None
+            # Search in all tiers (via snapshots)
+            for cache_dict in [gpu_cache_snapshot, cpu_cache_snapshot, dropped_chunks_snapshot]:
+                if chunk_key in cache_dict:
+                    chunk = cache_dict[chunk_key]
+                    break
+            if chunk:
+                total_size += chunk.size_bytes
+
         return total_size
