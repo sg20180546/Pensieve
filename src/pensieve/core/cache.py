@@ -167,12 +167,26 @@ class TwoTierCache:
                 # ✅ Note: Don't remove from session_chunks yet
                 # (will be re-added below if needed, with check to avoid duplicates)
 
-        # Make space if needed
+        # Make space if needed with cascade fallback
         current_used = self.gpu_used_bytes if location == CacheLocation.GPU else self.cpu_used_bytes
         if current_used + chunk_size > capacity:
             freed = self._evict_to_free_space(chunk_size, location)
             if freed < chunk_size:
-                print(f"Warning: Could not free enough space for chunk {chunk_key}")
+                # Eviction in target tier failed
+                if location == CacheLocation.GPU:
+                    # GPU is full, try cascading to CPU
+                    success = self._demote_to_cpu_with_eviction(chunk)
+                    if success:
+                        # Successfully demoted to CPU
+                        return True
+                    else:
+                        # Even CPU is full, cannot store
+                        print(f"Warning: Could not store chunk {chunk_key} - all tiers full")
+                        return False
+                else:
+                    # CPU is full and no other tier to fall back to
+                    print(f"Warning: Could not free enough space for chunk {chunk_key} - CPU full")
+                    return False
 
         # Store new chunk
         target_cache[chunk_key] = chunk
@@ -391,6 +405,75 @@ class TwoTierCache:
         del self.session_chunks[session_id]
         self._update_statistics()
         return freed
+
+    def _demote_to_cpu_with_eviction(self, chunk: KVChunk) -> bool:
+        """Demote chunk to CPU tier, evicting from CPU if necessary.
+
+        Cascade strategy when GPU is full:
+        1. Try to move chunk to CPU
+        2. If CPU is full, evict cheapest chunk from CPU to DROPPED
+        3. Then move the original chunk to CPU
+
+        Args:
+            chunk: KVChunk to demote from GPU to CPU
+
+        Returns:
+            True if successfully demoted to CPU, False if even CPU is full
+        """
+        chunk_size = chunk.size_bytes
+        chunk_key = chunk.key
+
+        # Check if CPU has space
+        if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
+            # CPU has space, move directly
+            chunk.move_to_cpu()
+            self.cpu_cache[chunk_key] = chunk
+            self.cpu_used_bytes += chunk_size
+            chunk.location = CacheLocation.CPU
+            self._update_statistics()
+            return True
+
+        # CPU is full - evict cheapest chunk from CPU to DROPPED
+        cpu_chunks = list(self.cpu_cache.values())
+        if not cpu_chunks:
+            # No chunks in CPU to evict, can't demote
+            return False
+
+        # Get eviction candidates from CPU (cost-based ranking)
+        cpu_evict_candidates = self.eviction_policy.select_chunks_to_evict(
+            cpu_chunks, chunk_size, cache=self
+        )
+
+        # Evict from CPU until we have space
+        cpu_freed = 0
+        for evict_key in cpu_evict_candidates:
+            if cpu_freed >= chunk_size:
+                break
+
+            if evict_key not in self.cpu_cache:
+                continue
+
+            # Skip pinned chunks
+            if self.is_pinned(evict_key):
+                continue
+
+            # Move from CPU to DROPPED
+            evict_chunk = self.cpu_cache.pop(evict_key)
+            evict_chunk.location = CacheLocation.DROPPED
+            self.dropped_chunks[evict_key] = evict_chunk
+            cpu_freed += evict_chunk.size_bytes
+            # ✅ Keep cpu_used_bytes unchanged (DROPPED chunks use CPU memory)
+
+        # Now try to move original chunk to CPU
+        if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
+            chunk.move_to_cpu()
+            self.cpu_cache[chunk_key] = chunk
+            self.cpu_used_bytes += chunk_size
+            chunk.location = CacheLocation.CPU
+            self._update_statistics()
+            return True
+
+        return False
 
     def swap_chunk_to_cpu(self, chunk_key: str) -> bool:
         """Move chunk from GPU to CPU.
