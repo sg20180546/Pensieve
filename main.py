@@ -531,7 +531,7 @@ def run_concurrent_comparison(args):
     print("=" * 60)
     print(f"\nConfiguration:")
     print(f"  Concurrent Users: {num_users}")
-    print(f"  client_conversations: {client_conversations}")
+    # print(f"  client_conversations: {client_conversations}")
 
     # print("client_conversations")
     print(f"  Base Request Interval: {args.request_interval}s")
