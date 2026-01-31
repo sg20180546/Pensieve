@@ -232,6 +232,8 @@ class BatchScheduler:
                     cache_plan.chunks_to_recompute[session_id] = []
                 cache_plan.chunks_to_recompute[session_id].append(chunk_key)
         # print(chunks_needed)
+        print("gpu_used_bytes ",self.cache.gpu_used_bytes)
+        print("cpu_used_bytes ",self.cache.cpu_used_bytes)
         print("chunks_already_in",len(chunks_needed)-len(cache_plan.chunks_to_swap_in)-len(cache_plan.chunks_to_recompute))
         print("chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         print("chunks_to_swap_out ",len(cache_plan.chunks_to_swap_out))
