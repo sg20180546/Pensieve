@@ -711,9 +711,10 @@ class Worker:
                 # Try to swap chunk to GPU
                 print("SWAP to gpu CHUNK START")
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
-
+                print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                 if not swap_success:
                     # Swap failed - check if it's recoverable
+                    print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                     session_total_size = self.cache.get_session_total_chunk_size(session_id)
                     gpu_capacity = self.cache.gpu_capacity_bytes
 
@@ -729,7 +730,7 @@ class Worker:
                         # Session fits in GPU capacity but currently full
                         # Retry with exponential backoff
                         retry_count += 1
-                        if retry_count % 3000 == 0:
+                        if retry_count % 30 == 0:
                             print(f"  Retrying swap_in for {chunk_key} (attempt {retry_count}/{max_retries})")
 
             if not swap_success:
