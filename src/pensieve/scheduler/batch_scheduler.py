@@ -116,6 +116,8 @@ class BatchScheduler:
             else:
                 # Add unpinned requests to batch
                 batch.add_request(req)
+                print("batch len",len(batch))
+                break
 
         # Return skipped requests to back of queue for next batch
         for req in skipped_reqs:
