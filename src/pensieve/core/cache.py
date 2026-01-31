@@ -900,3 +900,87 @@ class TwoTierCache:
                 total_size += chunk.size_bytes
 
         return total_size
+
+    def print_session_chunks_status(self, session_id: str) -> str:
+        """Print detailed status of all chunks for a session.
+
+        Shows each chunk's tier location (GPU/CPU/DROPPED), size, and other metadata.
+        Thread-safe: Uses snapshots to handle concurrent modifications.
+
+        Args:
+            session_id: Session ID to display
+
+        Returns:
+            Formatted status string
+        """
+        lines = []
+        lines.append(f"\n{'='*80}")
+        lines.append(f"Session Chunks Status: {session_id}")
+        lines.append(f"{'='*80}")
+
+        # ✅ SNAPSHOT: Get chunk keys and cache snapshots
+        chunk_keys = []
+        if session_id in self.session_chunks:
+            chunk_keys = self.session_chunks[session_id][:]
+
+        gpu_cache_snapshot = dict(self.gpu_cache)
+        cpu_cache_snapshot = dict(self.cpu_cache)
+        dropped_chunks_snapshot = dict(self.dropped_chunks)
+
+        if not chunk_keys:
+            lines.append(f"No chunks found for session {session_id}")
+            result = "\n".join(lines)
+            print(result)
+            return result
+
+        # Count chunks by tier
+        gpu_count = 0
+        cpu_count = 0
+        dropped_count = 0
+        total_size = 0
+
+        # Detailed chunk info
+        lines.append(f"\nDetailed Chunk List:")
+        lines.append(f"{'-'*80}")
+        lines.append(f"{'Chunk Key':<50} {'Tier':<10} {'Size (MB)':<12}")
+        lines.append(f"{'-'*80}")
+
+        for chunk_key in chunk_keys:
+            chunk = None
+            tier = "MISSING"
+
+            # Search in all tiers
+            if chunk_key in gpu_cache_snapshot:
+                chunk = gpu_cache_snapshot[chunk_key]
+                tier = "GPU"
+                gpu_count += 1
+            elif chunk_key in cpu_cache_snapshot:
+                chunk = cpu_cache_snapshot[chunk_key]
+                tier = "CPU"
+                cpu_count += 1
+            elif chunk_key in dropped_chunks_snapshot:
+                chunk = dropped_chunks_snapshot[chunk_key]
+                tier = "DROPPED"
+                dropped_count += 1
+
+            if chunk:
+                size_mb = chunk.size_bytes / (1024**2)
+                total_size += chunk.size_bytes
+                lines.append(f"{chunk_key:<50} {tier:<10} {size_mb:<12.2f}")
+            else:
+                lines.append(f"{chunk_key:<50} {tier:<10} {'N/A':<12}")
+
+        lines.append(f"{'-'*80}")
+        lines.append(f"\nSummary:")
+        lines.append(f"  Total chunks: {len(chunk_keys)}")
+        lines.append(f"  GPU chunks: {gpu_count}")
+        lines.append(f"  CPU chunks: {cpu_count}")
+        lines.append(f"  DROPPED chunks: {dropped_count}")
+        lines.append(f"  Total size: {total_size / (1024**3):.2f}GB")
+        lines.append(f"  GPU capacity: {self.gpu_capacity_bytes / (1024**3):.2f}GB")
+        lines.append(f"  CPU capacity: {self.cpu_capacity_bytes / (1024**3):.2f}GB")
+        lines.append(f"{'='*80}\n")
+
+        result = "\n".join(lines)
+        print(result)
+        return result
