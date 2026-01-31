@@ -228,8 +228,8 @@ class BatchScheduler:
         # 3. Build cache plan
         cache_plan.chunks_to_swap_in = chunks_to_swap_in
         cache_plan.chunks_to_swap_out = chunks_to_swap_out
-        print("cache_plan.chunks_to_swap_in",cache_plan.chunks_to_swap_in)
-        print("cache_plan.chunks_to_swap_out",cache_plan.chunks_to_swap_out)
+        # print("cache_plan.chunks_to_swap_in",cache_plan.chunks_to_swap_in)
+        # print("cache_plan.chunks_to_swap_out",cache_plan.chunks_to_swap_out)
         # 4. Identify dropped chunks needing recovery
         dropped_chunks = {
             key: chunk
@@ -252,8 +252,9 @@ class BatchScheduler:
         print("cpu_used_bytes ",self.cache.cpu_used_bytes)
         print("chunks_already_in",len(chunks_needed)-len(cache_plan.chunks_to_swap_in)-len(cache_plan.chunks_to_recompute))
         # print("chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
-        print("cache_plan.chunks_to_swap_in")
-        print("cache_plan.chunks_to_swap_out")
+        # print("cache_plan.chunks_to_swap_in")
+        # print("cache_plan.chunks_to_swap_out")
+        print("cache_plan.chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         print("chunks_to_swap_out ",len(cache_plan.chunks_to_swap_out))
         print("chunks_to_recompute ",len(cache_plan.chunks_to_recompute))
         return cache_plan
