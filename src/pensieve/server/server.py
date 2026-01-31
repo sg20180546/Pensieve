@@ -736,10 +736,12 @@ Active Sessions: {len(self.active_sessions)}
             try:
                 req_data = self.async_request_queue.get(timeout=timeout)
                 batch.append(req_data)
-                break
+                print("batch len",len(batch))
+                # break
+                return batch
             except:  # Queue.Empty
                 break
-        # print("batch len",len(batch))
+        # 
         return batch
 
     def _execute_batch_async(self, batch_requests: List[Dict]):
