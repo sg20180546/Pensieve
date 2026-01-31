@@ -495,8 +495,8 @@ class TwoTierCache:
         eviction_candidates = self.eviction_policy.select_chunks_to_evict(
             chunks_to_rank, required_bytes, cache=self
         )
-        print("eviction_candidates")
-        print(eviction_candidates)
+        # print("eviction_candidates")
+        # print(eviction_candidates)
         # Evict chunks in order (skip pinned chunks)
         for chunk_key in eviction_candidates:
             if freed >= required_bytes:
@@ -508,7 +508,7 @@ class TwoTierCache:
 
             # IMPORTANT: Skip pinned chunks (cannot evict while being executed)
             if self.is_pinned(chunk_key):
-                print("reason pin")
+                # print("reason pin")
                 continue
             print("ok i am evicted",chunk_key)
             chunk = cache.pop(chunk_key)
