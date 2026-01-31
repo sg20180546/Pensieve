@@ -696,12 +696,45 @@ class Worker:
             except Exception as e:
                 print(f"Warning: Failed to evict {chunk_key}: {e}")
 
-        # 2. Swap in chunks (CPU → GPU)
+        # 2. Swap in chunks (CPU → GPU) with cascade retry logic
         for chunk_key in cache_plan.chunks_to_swap_in:
-            try:
-                self.cache.swap_chunk_to_gpu(chunk_key)
-            except Exception as e:
-                print(f"Warning: Failed to swap in {chunk_key}: {e}")
+            # Extract session_id from chunk_key (format: "session:chunk:id:layer:idx")
+            session_id = chunk_key.split(':')[0]
+
+            # Try to swap in with retry logic
+            swap_success = False
+            max_retries = 100  # Prevent infinite loops
+            retry_count = 0
+
+            while not swap_success:
+                # Try to swap chunk to GPU
+                swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
+
+                if not swap_success:
+                    # Swap failed - check if it's recoverable
+                    session_total_size = self.cache.get_session_total_chunk_size(session_id)
+                    gpu_capacity = self.cache.gpu_capacity_bytes
+
+                    if session_total_size > gpu_capacity:
+                        # Session's total chunks exceed GPU capacity - fatal error
+                        raise RuntimeError(
+                            f"Fatal: Session {session_id} requires {session_total_size / 1024**3:.2f}GB "
+                            f"but GPU capacity is only {gpu_capacity / 1024**3:.2f}GB. "
+                            f"Cannot fit all chunks in GPU. Increase --gpu-cache or reduce workload."
+                        )
+                    else:
+                        # Session fits in GPU capacity but currently full
+                        # Retry with exponential backoff
+                        retry_count += 1
+                        if retry_count % 3000 == 0:
+                            print(f"  Retrying swap_in for {chunk_key} (attempt {retry_count}/{max_retries})")
+
+            if not swap_success:
+                # Hit max retries without success
+                raise RuntimeError(
+                    f"Failed to swap in {chunk_key} after {max_retries} attempts. "
+                    f"GPU cache may be fragmented or permanently full."
+                )
 
         # 3. ✅ Batch-level recovery with full context dependency
         # BatchedRecoveryManager handles multiple sessions efficiently,

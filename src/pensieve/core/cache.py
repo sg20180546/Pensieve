@@ -512,27 +512,35 @@ class TwoTierCache:
         return True
 
     def swap_chunk_to_gpu(self, chunk_key: str) -> bool:
-        """Move chunk from CPU to GPU.
+        """Move chunk from CPU to GPU with cascade fallback.
+
+        If GPU is full:
+        1. Try to evict chunks from GPU
+        2. If still not enough space, keep chunk in CPU (don't move)
+        3. Return False to indicate swap failed
 
         Args:
             chunk_key: Key of chunk to swap
 
         Returns:
-            True if successful
+            True if successful, False if GPU still full (chunk stays in CPU)
         """
         if chunk_key not in self.cpu_cache:
             return False
         print("swap_chunk_to_gpu", chunk_key)
-        chunk = self.cpu_cache.pop(chunk_key)
+        chunk = self.cpu_cache[chunk_key]  # ✅ Don't pop yet - peek only
         chunk_size = chunk.size_bytes
 
         # Make space in GPU if needed
         if self.gpu_used_bytes + chunk_size > self.gpu_capacity_bytes:
             freed = self._evict_to_free_space(chunk_size, CacheLocation.GPU)
             if freed < chunk_size:
-                print(f"Warning: Could not free enough GPU space for chunk {chunk_key}")
+                # GPU still doesn't have enough space
+                print(f"Warning: Could not free enough GPU space for chunk {chunk_key} - keeping in CPU")
+                return False  # ✅ Return False, don't move chunk
 
-        # Move to GPU
+        # Now we can safely move to GPU
+        chunk = self.cpu_cache.pop(chunk_key)  # ✅ Now actually remove from CPU
         chunk.move_to_gpu(self.device)
         self.gpu_cache[chunk_key] = chunk
         self.cpu_used_bytes -= chunk_size
@@ -847,3 +855,28 @@ class TwoTierCache:
             SessionMetadata if exists, None otherwise
         """
         return self.session_metadata.get(session_id, None)
+
+    def get_session_total_chunk_size(self, session_id: str) -> int:
+        """Get total size in bytes for all chunks of a session (all tiers).
+
+        Calculates the total memory requirement for a session across
+        GPU, CPU, and DROPPED tiers.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Total size in bytes
+        """
+        total_size = 0
+        if session_id in self.session_chunks:
+            for chunk_key in self.session_chunks[session_id]:
+                chunk = None
+                # Search in all tiers
+                for cache_dict in [self.gpu_cache, self.cpu_cache, self.dropped_chunks]:
+                    if chunk_key in cache_dict:
+                        chunk = cache_dict[chunk_key]
+                        break
+                if chunk:
+                    total_size += chunk.size_bytes
+        return total_size
