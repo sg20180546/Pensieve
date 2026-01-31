@@ -984,3 +984,96 @@ class TwoTierCache:
         result = "\n".join(lines)
         print(result)
         return result
+
+    def print_all_sessions_status(self) -> str:
+        """Print status of all sessions and their chunks in summary format.
+
+        Shows all sessions with their chunk distribution across tiers.
+        Thread-safe: Uses snapshots to handle concurrent modifications.
+
+        Returns:
+            Formatted status string
+        """
+        lines = []
+        lines.append(f"\n{'='*100}")
+        lines.append(f"All Sessions Cache Status")
+        lines.append(f"{'='*100}")
+
+        # ✅ SNAPSHOT: Get all session_ids and cache snapshots
+        all_session_ids = set(self.session_chunks.keys())
+
+        gpu_cache_snapshot = dict(self.gpu_cache)
+        cpu_cache_snapshot = dict(self.cpu_cache)
+        dropped_chunks_snapshot = dict(self.dropped_chunks)
+
+        if not all_session_ids:
+            lines.append("No sessions found")
+            result = "\n".join(lines)
+            print(result)
+            return result
+
+        # Header
+        lines.append(f"\n{'Session ID':<30} {'GPU Chunks':<15} {'CPU Chunks':<15} {'DROPPED':<15} {'Total Size (GB)':<20}")
+        lines.append(f"{'-'*100}")
+
+        total_gpu_chunks = 0
+        total_cpu_chunks = 0
+        total_dropped_chunks = 0
+        total_overall_size = 0
+
+        # Process each session
+        for session_id in sorted(all_session_ids):
+            chunk_keys = self.session_chunks[session_id]
+
+            gpu_count = 0
+            cpu_count = 0
+            dropped_count = 0
+            session_size = 0
+
+            # Count chunks by tier for this session
+            for chunk_key in chunk_keys:
+                chunk = None
+
+                if chunk_key in gpu_cache_snapshot:
+                    chunk = gpu_cache_snapshot[chunk_key]
+                    gpu_count += 1
+                elif chunk_key in cpu_cache_snapshot:
+                    chunk = cpu_cache_snapshot[chunk_key]
+                    cpu_count += 1
+                elif chunk_key in dropped_chunks_snapshot:
+                    chunk = dropped_chunks_snapshot[chunk_key]
+                    dropped_count += 1
+
+                if chunk:
+                    session_size += chunk.size_bytes
+
+            size_gb = session_size / (1024**3)
+            lines.append(
+                f"{session_id:<30} {gpu_count:<15} {cpu_count:<15} {dropped_count:<15} {size_gb:<20.2f}"
+            )
+
+            total_gpu_chunks += gpu_count
+            total_cpu_chunks += cpu_count
+            total_dropped_chunks += dropped_count
+            total_overall_size += session_size
+
+        # Summary footer
+        lines.append(f"{'-'*100}")
+        lines.append(
+            f"{'TOTAL':<30} {total_gpu_chunks:<15} {total_cpu_chunks:<15} {total_dropped_chunks:<15} "
+            f"{total_overall_size / (1024**3):<20.2f}"
+        )
+        lines.append(f"\nCapacity Status:")
+        lines.append(
+            f"  GPU: {self.gpu_used_bytes / (1024**3):.2f}GB / {self.gpu_capacity_bytes / (1024**3):.2f}GB "
+            f"(used: {100 * self.gpu_used_bytes / self.gpu_capacity_bytes:.1f}%)"
+        )
+        lines.append(
+            f"  CPU: {self.cpu_used_bytes / (1024**3):.2f}GB / {self.cpu_capacity_bytes / (1024**3):.2f}GB "
+            f"(used: {100 * self.cpu_used_bytes / self.cpu_capacity_bytes:.1f}%)"
+        )
+        lines.append(f"{'='*100}\n")
+
+        result = "\n".join(lines)
+        print(result)
+        return result

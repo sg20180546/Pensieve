@@ -713,6 +713,9 @@ class Worker:
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
                 print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                 # ✅ Debug: Print session's all chunks status
+                # self.cache.print_session_chunks_status(session_id)
+                # ✅ Debug: Print all sessions status
+                self.cache.print_all_sessions_status()
 
                 if not swap_success:
                     # Swap failed - check if it's recoverable
