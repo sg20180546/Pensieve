@@ -574,7 +574,7 @@ def run_concurrent_comparison(args):
     print("✓ Pensieve model pre-loaded successfully")
 
     # ✅ Start batch collection thread for unified scheduling
-    pensieve_server.start_batch_collection_thread()
+    # pensieve_server.start_batch_collection_thread()
     print(f"✓ Unified batch scheduler started (batch_timeout={pensieve_server.batch_timeout:.3f}s, max_batch_size={pensieve_server.max_batch_size})")
 
     # Launch concurrent client threads (using async submission)
