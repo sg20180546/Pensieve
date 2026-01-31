@@ -71,6 +71,7 @@ def load_sharept_dataset(
             if user_messages and all(msg.strip() for msg in user_messages):
                 session_id = f"session_{len(valid_conversations) + 1}"
                 valid_conversations.append((session_id, user_messages))
+                print("Turn :  ",len(human_turns) )
 
                 # Stop when we have enough conversations
                 if len(valid_conversations) >= num_conversations:
