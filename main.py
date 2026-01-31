@@ -292,7 +292,7 @@ def concurrent_client_worker(
     """
     tail_latencies = []
     session_id = f"session_{client_id}_{int(time.time() * 1000)}"
-
+    time.sleep(request_interval)
     for turn_idx, user_input in enumerate(conversations):
         # Wait before sending next request
         if turn_idx > 0:
