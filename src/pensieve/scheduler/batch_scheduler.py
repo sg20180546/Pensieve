@@ -194,7 +194,7 @@ class BatchScheduler:
         chunks_needing_space = []  # List of (chunk_key, chunk, needed_size)
 
         # PHASE 1: Snapshot cache state (quick, under lock)
-        with self.cache.cache_lock:
+        if True: # with self.cache_lock
             cpu_cache_snapshot = dict(self.cache.cpu_cache)
             gpu_cache_snapshot = dict(self.cache.gpu_cache)
             dropped_chunks_snapshot = dict(self.cache.dropped_chunks)
@@ -262,7 +262,7 @@ class BatchScheduler:
         # print(chunks_needed)
         # Use snapshotted values to avoid race condition
         print("gpu_used_bytes ", gpu_used_bytes)
-        with self.cache.cache_lock:
+        if True: # with self.cache_lock
             cpu_used_bytes = self.cache.cpu_used_bytes
         print("cpu_used_bytes ", cpu_used_bytes)
         print("chunks_already_in",len(chunks_needed)-len(cache_plan.chunks_to_swap_in)-len(cache_plan.chunks_to_recompute))

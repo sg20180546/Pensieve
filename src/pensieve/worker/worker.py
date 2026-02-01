@@ -148,7 +148,7 @@ class Worker:
 
         # 1. Get snapshots of caches (quick, under lock)
         try:
-            with pensieve_cache.cache_manager.cache_lock:
+            if True: # with pensieve_cache.cache_manager.cache_lock:
                 gpu_cache = dict(pensieve_cache.cache_manager.gpu_cache)
                 cpu_cache = dict(pensieve_cache.cache_manager.cpu_cache)
 

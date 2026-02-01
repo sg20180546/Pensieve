@@ -76,7 +76,7 @@ class PensieveCache(DynamicCache):
             positions = request_info.get('positions', [])  # chunk_ids
 
             # Snapshot caches to avoid iteration race conditions (quick, under lock)
-            with self.cache_manager.cache_lock:
+            if True: # with pensieve_cache.cache_manager.cache_lock:
                 gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
                 cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
 
@@ -106,7 +106,7 @@ class PensieveCache(DynamicCache):
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
             # Snapshot caches (quick, under lock)
-            with self.cache_manager.cache_lock:
+            if True: # with pensieve_cache.cache_manager.cache_lock:
                 gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
                 cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
 
