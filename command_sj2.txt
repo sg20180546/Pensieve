@@ -1,0 +1,34 @@
+
+
+64=290mb
+  
+
+  
+  
+  0129
+    python main.py --dataset sharegt   --num-concurrent-users 3  --model  meta-llama/Meta-Llama-3-8B-Instruct --gpu-cache 4 --cpu-cache 128 --min-turns 6 --max-turns 14  --max-new-tokens 2048 --request-interval 2
+
+
+  PENSIEVE_CACHE_DEBUG=1  PENSIEVE_DEBUG=1  python main.py --dataset sharegt   --num-concurrent-users 1  --model meta-llama/Meta-Llama-3-8B-Instruct --gpu-cache 64 --cpu-cache 128 --max-turns 10 --min-turns 10  --max-new-tokens 256
+
+
+
+
+
+
+
+PENSIEVE_CACHE_DEBUG=1  PENSIEVE_DEBUG=1  python main.py --dataset sharegt   --num-concurrent-users 1  --model  google/gemma-2-27b-it --gpu-cache 64 --cpu-cache 128 --max_turns 5 --min_turns 5  --max-new-tokens 64
+PENSIEVE_CACHE_DEBUG=1  PENSIEVE_DEBUG=1  python main.py --dataset sharegt   --num-concurrent-users 1  --model google/gemma-2-27b-it  --gpu-cache 64 --cpu-cache 128 --max_turns 5 --min_turns 5  --max-new-tokens 64 | grep -E "(FINAL KV|TOKEN RECOVERY|DEBUG _store|DEBUG TURN 1|DEBUG Step 0)" | head -50
+
+
+
+python main.py --mode compare --num-concurrent-users 1 \
+  --model meta-llama/Meta-Llama-3-8B-Instruct \
+  --max-new-tokens 60 2>&1 | grep -E "(FINAL KV|TOKEN RECOVERY|DEBUG _store|DEBUG TURN 1|DEBUG Step 0)" | head -50
+
+  
+   → run_dataset_evaluation() → run_concurrent_comparison() 호출
+
+4️⃣ Interactive Mode
+   python main.py --interactive --mode pensieve
+   → run_interactive() 호출
