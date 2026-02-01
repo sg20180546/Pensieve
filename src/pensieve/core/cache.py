@@ -563,7 +563,7 @@ class TwoTierCache:
         # print("swap_chunk_to_gpu",chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
-        with self.cache_lock:
+        if True: # with self.cache_lock:
             if chunk_key not in self.cpu_cache:
                 print("WHY@@@@@ swap_chunk_to_gpu")
                 return False
@@ -578,7 +578,7 @@ class TwoTierCache:
             #     return False
 
         # PHASE 3: Move chunk (quick, under lock)
-        with self.cache_lock:
+        if True: # with self.cache_lock:
             # Re-check chunk still exists (another thread might have moved it)
             if chunk_key not in self.cpu_cache:
                 return False
