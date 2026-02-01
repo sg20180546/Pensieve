@@ -713,16 +713,17 @@ class Worker:
 
             while not swap_success:
                 # Try to swap chunk to GPU
-                print("SWAP to gpu CHUNK START")
+                # print("SWAP to gpu CHUNK START".chunk_key)
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
-                print("SWAP to gpu CHUNK swap_chunk_to_gpu")
+                # print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                 # ✅ Debug: Print session's all chunks status
                 # self.cache.print_session_chunks_status(session_id)
                 # ✅ Debug: Print all sessions status
 
                 if not swap_success:
+
                     # Swap failed - check if it's recoverable
-                    print("SWAP to gpu CHUNK swap_chunk_to_gpu")
+                    print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
                     session_total_size = self.cache.get_session_total_chunk_size(session_id)
                     gpu_capacity = self.cache.gpu_capacity_bytes
 
@@ -736,8 +737,42 @@ class Worker:
                         )
                     else:
                         # Session fits in GPU capacity but currently full
-                        # Retry with exponential backoff
+                        # Need to evict from GPU to make space
                         retry_count += 1
+                        if retry_count > max_retries:
+                            print(f"Max retries ({max_retries}) exceeded for {chunk_key}")
+                            return False
+
+                        # Get chunk being swapped (to determine size needed)
+                        try:
+                            # Chunk could be in CPU cache or DROPPED
+                            if chunk_key in self.cache.cpu_cache:
+                                chunk_to_swap = self.cache.cpu_cache[chunk_key]
+                            elif chunk_key in self.cache.dropped_chunks:
+                                chunk_to_swap = self.cache.dropped_chunks[chunk_key]
+                            else:
+                                print(f"Chunk {chunk_key} not found in CPU or DROPPED")
+                                return False
+
+                            needed_size = chunk_to_swap.size_bytes
+                        except Exception as e:
+                            print(f"Failed to get chunk size: {e}")
+                            return False
+
+                        # Use cache manager's eviction to free GPU space
+                        # This ensures proper locking and eviction policy
+                        try:
+                            freed = self.cache._evict_to_free_space(
+                                needed_size*10,
+                                CacheLocation.GPU
+                            )
+                            if freed < needed_size:
+                                print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes")
+                        except Exception as e:
+                            print(f"Eviction from GPU failed: {e}")
+                            # If we can't evict, we're stuck
+                            return False
+
                         if retry_count % 100 == 0:
                             # self.cache.print_session_chunks_status(session_id)
                             self.cache.print_all_sessions_status()
