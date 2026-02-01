@@ -150,6 +150,7 @@ class TwoTierCache:
                 if location == CacheLocation.GPU:
                     success = self._demote_to_cpu_with_eviction(chunk)
                     if success:
+                        
                         return True
                     else:
                         print(f"Warning: Could not store chunk {chunk_key} - all tiers full")
@@ -408,7 +409,7 @@ class TwoTierCache:
         1. Try to move chunk to CPU
         2. If CPU is full, evict cheapest chunk from CPU to DROPPED
         3. Then move the original chunk to CPU
-
+        session_chunks
         Args:
             chunk: KVChunk to demote from GPU to CPU
 
@@ -420,7 +421,7 @@ class TwoTierCache:
         with self.cache_lock:
             chunk_size = chunk.size_bytes
             chunk_key = chunk.key
-            print("_demote_to_cpu_with_eviction",chunk_key)
+            # print("_demote_to_cpu_with_eviction",chunk_key)
             # Check if CPU has space
             if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
                 # CPU has space, move directly
@@ -428,12 +429,19 @@ class TwoTierCache:
                 self.cpu_cache[chunk_key] = chunk
                 self.cpu_used_bytes += chunk_size
                 chunk.location = CacheLocation.CPU
+               
+                if chunk.session_id not in self.session_chunks:
+                    self.session_chunks[chunk.session_id] = []
+                if chunk_key not in self.session_chunks[chunk.session_id]:
+                    self.session_chunks[chunk.session_id].append(chunk_key)
                 self._update_statistics()
+                print("safely _demote_to_cpu_with_eviction",chunk_key)
                 return True
 
             # CPU is full - evict cheapest chunk from CPU to DROPPED
             cpu_chunks = list(self.cpu_cache.values())
             if not cpu_chunks:
+                print("WHY?? _demote_to_cpu_with_eviction",chunk_key)
                 # No chunks in CPU to evict, can't demote
                 return False
 
@@ -458,10 +466,21 @@ class TwoTierCache:
                 # Move from CPU to DROPPED
                 evict_chunk = self.cpu_cache.pop(evict_key)
                 evict_chunk.location = CacheLocation.DROPPED
+
+                # Release tensor memory to free CPU space
+                if evict_chunk.key_tensor is not None:
+                    del evict_chunk.key_tensor
+                    evict_chunk.key_tensor = None
+                if evict_chunk.value_tensor is not None:
+                    del evict_chunk.value_tensor
+                    evict_chunk.value_tensor = None
+
+                # Store metadata only (tensors released)
                 self.dropped_chunks[evict_key] = evict_chunk
                 cpu_freed += evict_chunk.size_bytes
-                # ✅ Keep cpu_used_bytes unchanged (DROPPED chunks use CPU memory)
 
+            # Update memory tracking - space is actually freed
+            self.cpu_used_bytes -= cpu_freed
             # Now try to move original chunk to CPU
             if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
                 chunk.move_to_cpu()
@@ -469,6 +488,11 @@ class TwoTierCache:
                 self.cpu_used_bytes += chunk_size
                 chunk.location = CacheLocation.CPU
                 self._update_statistics()
+                if chunk.session_id not in self.session_chunks:
+                    self.session_chunks[chunk.session_id] = []
+                if chunk_key not in self.session_chunks[chunk.session_id]:
+                    self.session_chunks[chunk.session_id].append(chunk_key)
+                
                 return True
 
             return False
@@ -536,12 +560,12 @@ class TwoTierCache:
         Returns:
             True if successful, False if GPU still full (chunk stays in CPU)
         """
-        print("swap_chunk_to_gpu",chunk_key)
+        # print("swap_chunk_to_gpu",chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
         with self.cache_lock:
             if chunk_key not in self.cpu_cache:
-                print("WHY@@@@@ swap_chunk_to_gpu")
+                # print("WHY@@@@@ swap_chunk_to_gpu")
                 return False
             chunk = self.cpu_cache[chunk_key]
             chunk_size = chunk.size_bytes
@@ -565,7 +589,7 @@ class TwoTierCache:
             self.cpu_used_bytes -= chunk_size
             self.gpu_used_bytes += chunk_size
             self._update_statistics()
-            print("swap_chunk_to_gpu return",chunk_key)
+            # print("swap_chunk_to_gpu return",chunk_key)
 
         return True
 
@@ -659,19 +683,26 @@ class TwoTierCache:
                                     continue
 
                                 drop_chunk = self.cpu_cache.pop(drop_key)
-                                # ⚠️ IMPORTANT: DROPPED chunks stay in CPU memory!
-                                # They're in dropped_chunks dict but still take CPU space
-                                # Don't subtract from cpu_used_bytes - the space is still used
-                                cpu_freed += drop_chunk.size_bytes
-
-                                # Move to DROPPED tier (but tensors remain in CPU memory)
-                                self.dropped_chunks[drop_key] = drop_chunk
                                 drop_chunk.location = CacheLocation.DROPPED
-                                # ✅ Keep in session_chunks (tracking all tiers)
-                                # ✅ Keep in cpu_used_bytes (DROPPED chunks use CPU memory)
+
+                                # Release tensor memory to free CPU space
+                                if drop_chunk.key_tensor is not None:
+                                    del drop_chunk.key_tensor
+                                    drop_chunk.key_tensor = None
+                                if drop_chunk.value_tensor is not None:
+                                    del drop_chunk.value_tensor
+                                    drop_chunk.value_tensor = None
+
+                                # Store metadata only (tensors released)
+                                self.dropped_chunks[drop_key] = drop_chunk
+                                cpu_freed += drop_chunk.size_bytes
+                                # ✅ Keep in session_chunks (chunk metadata still exists)
 
                                 if cpu_freed >= chunk.size_bytes:
                                     break
+
+                            # Update memory tracking - space is actually freed
+                            self.cpu_used_bytes -= cpu_freed
 
                         # Now try to move chunk to CPU (space should be available)
                         if self.cpu_used_bytes + chunk.size_bytes <= self.cpu_capacity_bytes:
@@ -681,21 +712,35 @@ class TwoTierCache:
                             # ✅ Chunk still in session_chunks (now in CPU tier)
                         else:
                             # Still no space, drop the chunk directly
-                            self.dropped_chunks[chunk_key] = chunk
                             chunk.location = CacheLocation.DROPPED
-                            # ✅ Keep in session_chunks (tracking DROPPED tier too)
+
+                            # Release tensor memory
+                            if chunk.key_tensor is not None:
+                                del chunk.key_tensor
+                                chunk.key_tensor = None
+                            if chunk.value_tensor is not None:
+                                del chunk.value_tensor
+                                chunk.value_tensor = None
+
+                            self.dropped_chunks[chunk_key] = chunk
+                            self.cpu_used_bytes -= chunk.size_bytes
+                            # ✅ Keep in session_chunks (metadata still exists)
 
                 else:
                     # Evicting from CPU → DROPPED tier
-                    # ⚠️ IMPORTANT: Don't subtract from cpu_used_bytes!
-                    # DROPPED chunks stay in CPU memory (recovery cache)
-                    # Chunk moves: cpu_cache → dropped_chunks (both CPU memory)
-                    # Therefore: cpu_used_bytes unchanged
-
-                    self.dropped_chunks[chunk_key] = chunk
                     chunk.location = CacheLocation.DROPPED
 
-                    # ✅ Keep in session_chunks (chunk still exists, now DROPPED)
+                    # Release tensor memory
+                    if chunk.key_tensor is not None:
+                        del chunk.key_tensor
+                        chunk.key_tensor = None
+                    if chunk.value_tensor is not None:
+                        del chunk.value_tensor
+                        chunk.value_tensor = None
+
+                    self.dropped_chunks[chunk_key] = chunk
+                    self.cpu_used_bytes -= chunk.size_bytes
+                    # ✅ Keep in session_chunks (metadata still exists)
                     # (Will be cleaned up when session ends via evict_session())
 
             self._update_statistics()
