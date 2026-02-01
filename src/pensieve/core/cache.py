@@ -435,7 +435,7 @@ class TwoTierCache:
                 if chunk_key not in self.session_chunks[chunk.session_id]:
                     self.session_chunks[chunk.session_id].append(chunk_key)
                 self._update_statistics()
-                print("safely _demote_to_cpu_with_eviction",chunk_key)
+                # print("safely _demote_to_cpu_with_eviction",chunk_key)
                 return True
 
             # CPU is full - evict cheapest chunk from CPU to DROPPED
@@ -506,7 +506,7 @@ class TwoTierCache:
         Returns:
             True if successful
         """
-        print("swap_chunk_to_cpu" ,chunk_key)
+        # print("swap_chunk_to_cpu" ,chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
         with self.cache_lock:

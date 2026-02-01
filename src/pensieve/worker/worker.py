@@ -723,7 +723,7 @@ class Worker:
                 if not swap_success:
 
                     # Swap failed - check if it's recoverable
-                    print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
+                    # print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
                     session_total_size = self.cache.get_session_total_chunk_size(session_id)
                     gpu_capacity = self.cache.gpu_capacity_bytes
 
@@ -741,7 +741,7 @@ class Worker:
                         retry_count += 1
                         if retry_count > max_retries:
                             print(f"Max retries ({max_retries}) exceeded for {chunk_key}")
-                            return False
+                            # return False
 
                         # Get chunk being swapped (to determine size needed)
                         try:
@@ -769,7 +769,7 @@ class Worker:
                             if freed < needed_size:
                                 print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes")
                         except Exception as e:
-                            print(f"Eviction from GPU failed: {e}")
+                            # print(f"Eviction from GPU failed: {e}")
                             # If we can't evict, we're stuck
                             return False
 
