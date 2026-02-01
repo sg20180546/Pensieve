@@ -312,6 +312,7 @@ class Worker:
                         max_new_tokens=max_new_tokens,
                         original_input_lengths=original_input_lengths,
                     )
+                    print("_custom_generate return")
                 except Exception as e:
                     print(f"Error during custom generation: {e}")
                     import traceback
@@ -331,7 +332,7 @@ class Worker:
 
             # 6. Extract generated tokens and store new KV chunks
             results = self._process_outputs(batch, outputs)
-
+            print("process_output return")
             results.execution_time = total_elapsed
             results.prefill_time = prefill_time_elapsed
             results.generation_time = generation_time_elapsed
