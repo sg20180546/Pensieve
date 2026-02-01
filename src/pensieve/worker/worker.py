@@ -768,12 +768,12 @@ class Worker:
                         # Use cache manager's eviction to free GPU space
                         # This ensures proper locking and eviction policy
                         try:
-                            freed = self.cache._evict_to_free_space(
+                            self.cache._evict_to_free_space(
                                 needed_size*10,
                                 CacheLocation.GPU
                             )
-                            if freed < needed_size:
-                                print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes",chunk_key)
+                            # if freed < needed_size:
+                            #     print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes",chunk_key)
                         except Exception as e:
                             # print(f"Eviction from GPU failed: {e}")
                             # If we can't evict, we're stuck

@@ -574,8 +574,8 @@ class TwoTierCache:
         # PHASE 2: Evict if needed (heavy work, NO lock)
         if need_eviction:
             freed = self._evict_to_free_space(chunk_size, CacheLocation.GPU)
-            if freed < chunk_size:
-                return False
+            # if freed < chunk_size:
+            #     return False
 
         # PHASE 3: Move chunk (quick, under lock)
         with self.cache_lock:
