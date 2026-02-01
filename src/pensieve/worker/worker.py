@@ -317,6 +317,8 @@ class Worker:
                     print(f"Error during custom generation: {e}")
                     import traceback
                     traceback.print_exc()
+                    for session_id in session_ids:
+                        self.cache.unpin_session(session_id)
                     # Return empty result on error
                     return BatchResult(batch_id=batch.batch_id)
 
