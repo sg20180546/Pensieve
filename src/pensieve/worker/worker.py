@@ -719,7 +719,7 @@ class Worker:
 
             while not swap_success:
                 # Try to swap chunk to GPU
-                # print("SWAP to gpu CHUNK START".chunk_key)
+                print("SWAP to gpu CHUNK START".chunk_key)
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
                 # print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                 # ✅ Debug: Print session's all chunks status
