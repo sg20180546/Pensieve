@@ -145,7 +145,7 @@ class BatchScheduler:
             CachePlan with swap operations organized by priority
         """
         cache_plan = CachePlan(batch_id=batch.batch_id)
-
+        
         # Track chunks we need and their current locations
         chunks_needed: Dict[str, str] = {}  # {chunk_key: current_location}
         chunks_to_swap_in: List[str] = []
@@ -154,6 +154,7 @@ class BatchScheduler:
         # 1. Identify all chunks needed for this batch
         for req in batch.requests:
             session_id = req.session_id
+            self.cache.pin_session(session_id)
             # Get all available positions (chunks) for this session
             positions = self.cache.get_session_positions(session_id)
 

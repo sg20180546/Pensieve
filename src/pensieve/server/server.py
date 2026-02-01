@@ -244,7 +244,7 @@ class PensieveServer:
         # Get or create session
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = []
-            self.cache.pin_session(session_id)
+            # self.cache.pin_session(session_id)
 
         # Get conversation history
         history = self._get_session_history(session_id)
