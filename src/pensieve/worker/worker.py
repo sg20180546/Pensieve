@@ -329,6 +329,8 @@ class Worker:
             # prefill_time_elapsed was already calculated at line 123 (cache plan only)
             # Generation time is the rest
             generation_time_elapsed = total_elapsed - prefill_time_elapsed
+            for session_id in session_ids:
+                self.cache.unpin_session(session_id)
 
             # 6. Extract generated tokens and store new KV chunks
             results = self._process_outputs(batch, outputs)
@@ -343,10 +345,10 @@ class Worker:
 
             return results
 
-        finally:
+        # finally:
             # 8. UNPIN all sessions (allow concurrent requests to evict them if needed)
-            for session_id in session_ids:
-                self.cache.unpin_session(session_id)
+            # for session_id in session_ids:
+            #     self.cache.unpin_session(session_id)
 
     def _custom_generate(
         self,
