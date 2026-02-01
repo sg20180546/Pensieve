@@ -810,7 +810,9 @@ class Worker:
                 )
                 print(f"✓ Recovered {recovered_count} requests with dropped chunks")
             self.cache.print_all_sessions_status()
+        # print("")
         torch.cuda.synchronize(self.device)
+        print("_execute_cache_plan return")
     def _prepare_batch_inputs(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
