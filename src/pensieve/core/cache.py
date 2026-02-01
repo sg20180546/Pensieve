@@ -143,7 +143,8 @@ class TwoTierCache:
 
         # PHASE 2: Evict if needed (heavy work, NO lock)
         if need_eviction:
-            freed = self._evict_to_free_space(chunk_size, location)
+            # freed = self._evict_to_free_space(chunk_size, location)
+            freed=0
             if freed < chunk_size:
                 # Eviction failed, try cascade
                 if location == CacheLocation.GPU:
