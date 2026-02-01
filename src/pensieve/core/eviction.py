@@ -289,13 +289,13 @@ class RetentionValuePolicy:
                     input_ids = input_ids.to(device)
 
                     # Time the forward pass
-                    torch.cuda.synchronize() if torch.cuda.is_available() else None
+                    torch.cuda.synchronize(device) if torch.cuda.is_available() else None
                     import time
                     start = time.time()
 
                     outputs = model(input_ids, return_dict=True)
 
-                    torch.cuda.synchronize() if torch.cuda.is_available() else None
+                    torch.cuda.synchronize(device) if torch.cuda.is_available() else None
                     elapsed = time.time() - start
 
                     costs.append(elapsed)

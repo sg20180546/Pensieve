@@ -106,7 +106,6 @@ class TwoTierCache:
             )
             if not self.store_chunk(chunk, location):
                 success = False
-        torch.cuda.synchronize(self.device)
         return success
 
     def store_chunk(

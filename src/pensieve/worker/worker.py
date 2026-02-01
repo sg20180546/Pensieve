@@ -810,7 +810,7 @@ class Worker:
                 )
                 print(f"✓ Recovered {recovered_count} requests with dropped chunks")
             self.cache.print_all_sessions_status()
-            torch.cuda.synchronize(self.device)
+        torch.cuda.synchronize(self.device)
     def _prepare_batch_inputs(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
@@ -984,6 +984,7 @@ class Worker:
                 print(f"Warning: Failed to store new KV chunks: {e}")
 
         # 🔴 POST-STORE VALIDATION: Check chunks immediately after storing
+        torch.cuda.synchronize(self.device)
         return result
 
     def _store_new_kv_chunks(
