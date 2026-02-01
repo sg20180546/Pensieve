@@ -560,7 +560,7 @@ class TwoTierCache:
         Returns:
             True if successful, False if GPU still full (chunk stays in CPU)
         """
-        # print("swap_chunk_to_gpu",chunk_key)
+        print("swap_chunk_to_gpu",chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
         if True: # with self.cache_lock:

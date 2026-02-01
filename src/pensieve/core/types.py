@@ -232,8 +232,8 @@ class KVChunk:
     def move_to_gpu(self, device: str = 'cuda:0') -> None:
         """Move tensors to GPU."""
         if self.location == CacheLocation.CPU:
-            self.key_tensor = self.key_tensor.to(device,non_blocking=True)
-            self.value_tensor = self.value_tensor.to(device,non_blocking=True)
+            self.key_tensor = self.key_tensor.to(device,non_blocking=False)
+            self.value_tensor = self.value_tensor.to(device,non_blocking=False)
             self.location = CacheLocation.GPU
 
 
