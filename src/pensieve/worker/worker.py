@@ -345,7 +345,8 @@ class Worker:
 
             return results
 
-        # finally:
+        finally:
+            print("ERROR ")
             # 8. UNPIN all sessions (allow concurrent requests to evict them if needed)
             # for session_id in session_ids:
             #     self.cache.unpin_session(session_id)
