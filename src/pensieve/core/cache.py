@@ -137,7 +137,7 @@ class TwoTierCache:
         capacity = self.gpu_capacity_bytes if location == CacheLocation.GPU else self.cpu_capacity_bytes
 
         # PHASE 1: Check space needed (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             current_used = self.gpu_used_bytes if location == CacheLocation.GPU else self.cpu_used_bytes
             need_eviction = (current_used + chunk_size > capacity)
 
@@ -159,7 +159,7 @@ class TwoTierCache:
                     return False
 
         # PHASE 3: Store chunk (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             # ✅ CRITICAL: Check ALL caches for duplicates
             for cache_dict, cache_location in [
                 (self.gpu_cache, CacheLocation.GPU),
@@ -212,7 +212,7 @@ class TwoTierCache:
             None if any layer is missing or evicted
         """
         # PHASE 1: Snapshot caches (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             gpu_snapshot = dict(self.gpu_cache)
             cpu_snapshot = dict(self.cpu_cache)
 
@@ -225,7 +225,7 @@ class TwoTierCache:
                     layer_kv[chunk.layer_idx] = (chunk.key_tensor, chunk.value_tensor)
 
         # PHASE 3: Update access time and stats (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             if layer_kv:
                 # Update access times for found chunks
                 for cache_dict in [self.gpu_cache, self.cpu_cache]:
@@ -251,7 +251,7 @@ class TwoTierCache:
         Returns:
             KVChunk if found, None otherwise
         """
-        with self.cache_lock
+        with self.cache_lock:
             # Check GPU cache
             if chunk_key in self.gpu_cache:
                 chunk = self.gpu_cache[chunk_key]
@@ -374,7 +374,7 @@ class TwoTierCache:
         Returns:
             Number of bytes freed (GPU + CPU, not DROPPED)
         """
-        with self.cache_lock
+        with self.cache_lock:
             freed = 0
             if session_id not in self.session_chunks:
                 return freed
@@ -417,7 +417,7 @@ class TwoTierCache:
         """
         # THREAD-SAFE: Acquire lock to protect cache modifications
         # RLock allows reentrant acquisition (safe if already held by caller)
-        with self.cache_lock
+        with self.cache_lock:
             chunk_size = chunk.size_bytes
             chunk_key = chunk.key
             # print("_demote_to_cpu_with_eviction",chunk_key)
@@ -508,7 +508,7 @@ class TwoTierCache:
         # print("swap_chunk_to_cpu" ,chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             if chunk_key not in self.gpu_cache:
                 return False
             chunk = self.gpu_cache[chunk_key]
@@ -520,7 +520,7 @@ class TwoTierCache:
             freed = self._evict_to_free_space(chunk_size, CacheLocation.CPU)
             if freed < chunk_size:
                 # Can't fit, drop to DROPPED tier
-                with self.cache_lock
+                with self.cache_lock:
                     if chunk_key in self.gpu_cache:
                         chunk = self.gpu_cache.pop(chunk_key)
                         self.dropped_chunks[chunk_key] = chunk
@@ -531,7 +531,7 @@ class TwoTierCache:
                 return False
 
         # PHASE 3: Move to CPU (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             # Re-check chunk still exists
             if chunk_key not in self.gpu_cache:
                 return False
@@ -562,7 +562,7 @@ class TwoTierCache:
         # print("swap_chunk_to_gpu",chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             if chunk_key not in self.cpu_cache:
                 # print("WHY@@@@@ swap_chunk_to_gpu")
                 return False
@@ -577,7 +577,7 @@ class TwoTierCache:
                 return False
 
         # PHASE 3: Move chunk (quick, under lock)
-        with self.cache_lock
+        with self.cache_lock:
             # Re-check chunk still exists (another thread might have moved it)
             if chunk_key not in self.cpu_cache:
                 return False
@@ -613,7 +613,7 @@ class TwoTierCache:
         """
         # THREAD-SAFE: Acquire lock to protect cache modifications
         # RLock allows reentrant acquisition (safe if already held by caller)
-        with self.cache_lock
+        with self.cache_lock:
             freed = 0
 
             if location == CacheLocation.GPU:
@@ -757,7 +757,7 @@ class TwoTierCache:
         Returns:
             List of KVChunk objects for session (order: position, then layer)
         """
-        with self.cache_lock
+        with self.cache_lock:
             chunks = []
             if session_id in self.session_chunks:
                 for chunk_key in self.session_chunks[session_id]:
@@ -892,7 +892,7 @@ class TwoTierCache:
             input_tokens: New input tokens in this request
             generated_tokens: New generated tokens in this request
         """
-        with self.cache_lock
+        with self.cache_lock:
             if session_id not in self.session_metadata:
                 self.session_metadata[session_id] = SessionMetadata(session_id)
 
