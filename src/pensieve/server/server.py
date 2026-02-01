@@ -244,6 +244,7 @@ class PensieveServer:
         # Get or create session
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = []
+            self.cache.pin_session(session_id)
 
         # Get conversation history
         history = self._get_session_history(session_id)
@@ -254,7 +255,7 @@ class PensieveServer:
         chunk_keys = []
         if session_id in self.cache.session_chunks:
             chunk_keys = self.cache.session_chunks[session_id][:]  # Copy the list
-
+            
         # ✅ NEW FIX: Encode only NEW input for Turn 2+
         # Turn 1: history is empty, so encode history + user_input (just user_input)
         # Turn 2+: cache handles history, so encode ONLY user_input
@@ -288,6 +289,7 @@ class PensieveServer:
 
             # Phase 4 Pipeline: Scheduler → Worker
             self.scheduler.add_request(request)
+                
             batch, cache_plan = self.scheduler.form_next_batch()
 
             # Execute batch

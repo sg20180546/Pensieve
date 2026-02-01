@@ -277,8 +277,8 @@ class Worker:
         # 1. PIN all sessions in this batch to protect from concurrent eviction
         session_ids = [req.session_id for req in batch.requests]
         print(session_ids)
-        for session_id in session_ids:
-            self.cache.pin_session(session_id)
+        # for session_id in session_ids:
+        #     self.cache.pin_session(session_id)
 
         try:
             # 2. Execute cache swaps (including recovery)
