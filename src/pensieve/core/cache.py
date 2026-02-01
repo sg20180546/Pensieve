@@ -1059,6 +1059,7 @@ class TwoTierCache:
         Returns:
             Formatted status string
         """
+        return ""
         lines = []
         lines.append(f"\n{'='*100}")
         lines.append(f"All Sessions Cache Status")
