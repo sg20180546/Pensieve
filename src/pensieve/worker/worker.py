@@ -729,7 +729,7 @@ class Worker:
                 if not swap_success:
 
                     # Swap failed - check if it's recoverable
-                    # print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
+                    print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
                     session_total_size = self.cache.get_session_total_chunk_size(session_id)
                     gpu_capacity = self.cache.gpu_capacity_bytes
 

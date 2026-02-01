@@ -565,7 +565,7 @@ class TwoTierCache:
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
         with self.cache_lock:
             if chunk_key not in self.cpu_cache:
-                # print("WHY@@@@@ swap_chunk_to_gpu")
+                print("WHY@@@@@ swap_chunk_to_gpu")
                 return False
             chunk = self.cpu_cache[chunk_key]
             chunk_size = chunk.size_bytes
