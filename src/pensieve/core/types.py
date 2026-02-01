@@ -233,7 +233,7 @@ class KVChunk:
         """Move tensors to GPU."""
         if self.location == CacheLocation.CPU:
             self.key_tensor = self.key_tensor.to(device,non_blocking=True)
-            self.value_tensor = self.value_tensor.to(non_blocking=True)
+            self.value_tensor = self.value_tensor.to(device,non_blocking=True)
             self.location = CacheLocation.GPU
 
 
