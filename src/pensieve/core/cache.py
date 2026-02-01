@@ -106,7 +106,7 @@ class TwoTierCache:
             )
             if not self.store_chunk(chunk, location):
                 success = False
-
+        torch.cuda.synchronize(self.device)
         return success
 
     def store_chunk(
@@ -425,7 +425,7 @@ class TwoTierCache:
             # Check if CPU has space
             if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
                 # CPU has space, move directly
-                chunk.move_to_cpu()
+                chunk.move_to_cpu(_async=True)
                 self.cpu_cache[chunk_key] = chunk
                 self.cpu_used_bytes += chunk_size
                 chunk.location = CacheLocation.CPU
@@ -483,7 +483,7 @@ class TwoTierCache:
             self.cpu_used_bytes -= cpu_freed
             # Now try to move original chunk to CPU
             if self.cpu_used_bytes + chunk_size <= self.cpu_capacity_bytes:
-                chunk.move_to_cpu()
+                chunk.move_to_cpu(_async=True)
                 self.cpu_cache[chunk_key] = chunk
                 self.cpu_used_bytes += chunk_size
                 chunk.location = CacheLocation.CPU
@@ -538,7 +538,7 @@ class TwoTierCache:
                 return False
 
             chunk = self.gpu_cache.pop(chunk_key)
-            chunk.move_to_cpu()
+            chunk.move_to_cpu(_async=True)
             self.cpu_cache[chunk_key] = chunk
             self.gpu_used_bytes -= chunk_size
             self.cpu_used_bytes += chunk_size

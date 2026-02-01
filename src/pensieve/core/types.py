@@ -215,18 +215,18 @@ class KVChunk:
         """Update last accessed time."""
         self.last_accessed = time.time()
 
-    def move_to_cpu(self) -> None:
+    def move_to_cpu(self, _async=False) -> None:
         """Move tensors to CPU."""
         if self.location == CacheLocation.GPU:
-            self.key_tensor = self.key_tensor.cpu()
-            self.value_tensor = self.value_tensor.cpu()
+            self.key_tensor = self.key_tensor.cpu(none_blocking=_async)
+            self.value_tensor = self.value_tensor.cpu(none_blocking=_async)
             self.location = CacheLocation.CPU
 
     def move_to_gpu(self, device: str = 'cuda:0') -> None:
         """Move tensors to GPU."""
         if self.location == CacheLocation.CPU:
-            self.key_tensor = self.key_tensor.to(device)
-            self.value_tensor = self.value_tensor.to(device)
+            self.key_tensor = self.key_tensor.to(device,non_blocking=True)
+            self.value_tensor = self.value_tensor.to(non_blocking=True)
             self.location = CacheLocation.GPU
 
 

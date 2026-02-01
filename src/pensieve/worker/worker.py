@@ -739,8 +739,8 @@ class Worker:
                         # Session fits in GPU capacity but currently full
                         # Need to evict from GPU to make space
                         retry_count += 1
-                        if retry_count > max_retries:
-                            print(f"Max retries ({max_retries}) exceeded for {chunk_key}")
+                        # if retry_count > max_retries:
+                            # print(f"Max retries ({max_retries}) exceeded for {chunk_key}")
                             # return False
 
                         # Get chunk being swapped (to determine size needed)
@@ -810,6 +810,7 @@ class Worker:
                 )
                 print(f"✓ Recovered {recovered_count} requests with dropped chunks")
             self.cache.print_all_sessions_status()
+            torch.cuda.synchronize(self.device)
     def _prepare_batch_inputs(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
