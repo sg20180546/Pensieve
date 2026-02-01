@@ -767,17 +767,17 @@ class Worker:
 
                         # Use cache manager's eviction to free GPU space
                         # This ensures proper locking and eviction policy
-                        try:
-                            self.cache._evict_to_free_space(
-                                needed_size*10,
-                                CacheLocation.GPU
-                            )
+                        # try:
+                            # self.cache._evict_to_free_space(
+                            #     needed_size*10,
+                            #     CacheLocation.GPU
+                            # )
                             # if freed < needed_size:
                             #     print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes",chunk_key)
-                        except Exception as e:
+                        # except Exception as e:
                             # print(f"Eviction from GPU failed: {e}")
                             # If we can't evict, we're stuck
-                            return False
+                            # return False
 
                         if retry_count % 100 == 0:
                             # self.cache.print_session_chunks_status(session_id)
