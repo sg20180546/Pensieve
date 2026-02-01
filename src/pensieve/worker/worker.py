@@ -773,7 +773,7 @@ class Worker:
                                 CacheLocation.GPU
                             )
                             if freed < needed_size:
-                                print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes")
+                                print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes",chunk_key)
                         except Exception as e:
                             # print(f"Eviction from GPU failed: {e}")
                             # If we can't evict, we're stuck
