@@ -203,20 +203,23 @@ class BatchScheduler:
 
         # PHASE 2: Analyze and plan (no lock, heavy computation)
         # First pass: identify all chunks that need GPU space
+        # Track accumulated space to handle multiple chunks in sequence
+        accumulated_gpu_used = gpu_used_bytes
         for chunk_key in chunks_in_cpu:
             chunk = cpu_cache_snapshot.get(chunk_key)
             if chunk:
-                # Check if chunk size fits in GPU
+                # Check if chunk size fits in GPU with accumulated usage
                 if (
-                    gpu_used_bytes + chunk.size_bytes
+                    accumulated_gpu_used + chunk.size_bytes
                     <= gpu_capacity_bytes
                 ):
                     # GPU has space, can swap in immediately
                     chunks_to_swap_in.append(chunk_key)
+                    accumulated_gpu_used += chunk.size_bytes  # Update accumulated space
                 else:
                     # GPU is full, this chunk needs space to be freed
                     evict_amount = (
-                        gpu_used_bytes + chunk.size_bytes
+                        accumulated_gpu_used + chunk.size_bytes
                         - gpu_capacity_bytes
                     )
                     chunks_needing_space.append((chunk_key, chunk, evict_amount))
