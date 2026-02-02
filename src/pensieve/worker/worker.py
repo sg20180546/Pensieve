@@ -691,16 +691,16 @@ class Worker:
             cache_plan: Cache operations to execute
             batch: Current batch (needed for recovery)
         """
-        print("_execute_cache_plan")
-        self.cache.print_all_sessions_status()
+        # print("_execute_cache_plan")
+        # self.cache.print_all_sessions_status()
         # 1. Swap out chunks first (GPU → CPU)
         for chunk_key in cache_plan.chunks_to_swap_out:
             try:
                 self.cache.swap_chunk_to_cpu(chunk_key)
             except Exception as e:
                 print(f"Warning: Failed to evict {chunk_key}: {e}")
-        print("SWAP OUT DONE")
-        self.cache.print_all_sessions_status()
+        # print("SWAP OUT DONE")
+        # self.cache.print_all_sessions_status()
         # 2. Swap in chunks (CPU → GPU) with cascade retry logic
         for chunk_key in cache_plan.chunks_to_swap_in:
             # Extract session_id from chunk_key (format: "session:chunk:id:layer:idx")
@@ -775,7 +775,7 @@ class Worker:
 
                         if retry_count % 100 == 0:
                             # self.cache.print_session_chunks_status(session_id)
-                            self.cache.print_all_sessions_status()
+                            # self.cache.print_all_sessions_status()
 
                             print(f"  Retrying swap_in for {chunk_key} (attempt {retry_count}/{max_retries})")
 
@@ -785,8 +785,8 @@ class Worker:
                     f"Failed to swap in {chunk_key} after {max_retries} attempts. "
                     f"GPU cache may be fragmented or permanently full."
                 )
-        print("SWAP IN DONE")
-        self.cache.print_all_sessions_status()
+        # print("SWAP IN DONE")
+        # self.cache.print_all_sessions_status()
         # 3. ✅ Batch-level recovery with full context dependency
         # BatchedRecoveryManager handles multiple sessions efficiently,
         # respecting both layer-wise and token-wise dependencies
@@ -809,7 +809,7 @@ class Worker:
                     1 for plan in recovery_results.values() if plan is not None
                 )
                 print(f"✓ Recovered {recovered_count} requests with dropped chunks")
-            self.cache.print_all_sessions_status()
+            # self.cache.print_all_sessions_status()
     def _prepare_batch_inputs(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:

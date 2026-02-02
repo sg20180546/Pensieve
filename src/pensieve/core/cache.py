@@ -435,7 +435,7 @@ class TwoTierCache:
                 if chunk_key not in self.session_chunks[chunk.session_id]:
                     self.session_chunks[chunk.session_id].append(chunk_key)
                 self._update_statistics()
-                print("safely _demote_to_cpu_with_eviction",chunk_key)
+                # print("safely _demote_to_cpu_with_eviction",chunk_key)
                 return True
 
             # CPU is full - evict cheapest chunk from CPU to DROPPED
@@ -506,7 +506,7 @@ class TwoTierCache:
         Returns:
             True if successful
         """
-        print("swap_chunk_to_cpu" ,chunk_key)
+        # print("swap_chunk_to_cpu" ,chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
         with self.cache_lock:
@@ -563,7 +563,7 @@ class TwoTierCache:
         # print("swap_chunk_to_gpu",chunk_key)
 
         # PHASE 1: Check if chunk exists and get size (quick, under lock)
-        with self.cache_lock:
+        if True: #with self.cache_lock: 
             if chunk_key not in self.cpu_cache:
                 # print("WHY@@@@@ swap_chunk_to_gpu")
                 return False
@@ -572,13 +572,13 @@ class TwoTierCache:
             need_eviction = (self.gpu_used_bytes + chunk_size > self.gpu_capacity_bytes)
 
         # PHASE 2: Evict if needed (heavy work, NO lock)
-        if need_eviction:
-            freed = self._evict_to_free_space(chunk_size, CacheLocation.GPU)
-            if freed < chunk_size:
-                return False
+        # if need_eviction:
+        #     freed = self._evict_to_free_space(chunk_size, CacheLocation.GPU)
+        #     if freed < chunk_size:
+        #         return False
 
         # PHASE 3: Move chunk (quick, under lock)
-        with self.cache_lock:
+        if True: #with self.cache_lock: 
             # Re-check chunk still exists (another thread might have moved it)
             if chunk_key not in self.cpu_cache:
                 return False
