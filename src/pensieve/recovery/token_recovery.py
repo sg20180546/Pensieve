@@ -287,7 +287,7 @@ class TokenRecoveryManager:
         # Collect KV for each layer
         collected_keys = [[] for _ in range(self.num_layers)]
         collected_values = [[] for _ in range(self.num_layers)]
-
+        
         # Load position chunks in order (respects token dependency)
         for chunk_id in range(start_chunk_id, end_chunk_id):
             chunk_key = f"{session_id}:chunk:{chunk_id}"
@@ -343,10 +343,12 @@ class TokenRecoveryManager:
 
                     if layer_idx == 0:
                         print(f"      [dtype-check] Concatenated KV for recovery: key={concatenated_key.dtype}, value={concatenated_value.dtype}")
-
+                    print(concatenated_key.shape, concatenated_value.shape)
                     past_key_values.append((concatenated_key, concatenated_value))
+                    
                 except Exception as e:
                     print(f"      ❌ Error concatenating layer {layer_idx}: {e}")
+                    print(past_key_values)
                     return None
 
         return tuple(past_key_values)
