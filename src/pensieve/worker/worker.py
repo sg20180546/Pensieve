@@ -949,6 +949,7 @@ class Worker:
             result.request_results[req.request_id] = {
                 "response": response_text,
                 "tokens_generated": len(generated_ids),
+                "generated_token_ids": generated_ids.tolist(),
                 "finished": True,
             }
 

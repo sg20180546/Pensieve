@@ -324,14 +324,13 @@ class PensieveServer:
             input_token_ids = input_ids.tolist() if isinstance(input_ids, torch.Tensor) else input_ids
             self.session_token_histories[session_id].extend(input_token_ids)
 
-            # Add generated tokens to history (if available)
+            # Add generated token IDs to history (for recovery)
             if request_id in batch_result.request_results:
-                gen_tokens = batch_result.request_results[request_id].get(
-                    'generated_tokens', []
+                gen_token_ids = batch_result.request_results[request_id].get(
+                    'generated_token_ids', []
                 )
-                if isinstance(gen_tokens, list):
-                    self.session_token_histories[session_id].extend(gen_tokens)
-
+                if isinstance(gen_token_ids, list) and len(gen_token_ids) > 0:
+                    self.session_token_histories[session_id].extend(gen_token_ids)
             # Update statistics
             self.total_requests += 1
             self.total_tokens_generated += tokens_generated
@@ -825,6 +824,14 @@ Active Sessions: {len(self.active_sessions)}
 
                         input_token_ids = req.input_ids.tolist() if isinstance(req.input_ids, torch.Tensor) else req.input_ids
                         self.session_token_histories[session_id].extend(input_token_ids)
+
+                        # Add generated token IDs to history (for recovery)
+                        if request_id in batch_result.request_results:
+                            gen_token_ids = batch_result.request_results[request_id].get(
+                                'generated_token_ids', []
+                            )
+                            if isinstance(gen_token_ids, list) and len(gen_token_ids) > 0:
+                                self.session_token_histories[session_id].extend(gen_token_ids)
 
                         # Mark as completed
                         self.pending_requests[request_id]['status'] = 'completed'
