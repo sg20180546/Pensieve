@@ -94,6 +94,19 @@ class TokenRecoveryManager:
             else model.config.n_layer
         )
         self.chunk_size = 32  # tokens per chunk
+        self._seq_dim = None  # Detected lazily from first KV tensor
+
+    def _get_seq_dim(self, kv_tensor: torch.Tensor) -> int:
+        """Get dimension index for seq_len in KV tensor.
+
+        Llama/Gemma: [batch, num_heads, seq_len, head_dim] → dim=2
+        Standard HF: [batch, seq_len, num_heads, head_dim] → dim=1
+        """
+        if kv_tensor is None or len(kv_tensor.shape) < 4:
+            return 1
+        if kv_tensor.shape[1] < 256:  # shape[1] is likely num_heads
+            return 2
+        return 1
 
     def create_recovery_plan(
         self,
@@ -337,6 +350,15 @@ class TokenRecoveryManager:
                 print(f"      ❌ Error loading {chunk_key}: {e}")
                 return None
 
+        # Detect seq_dim from first collected tensor
+        seq_dim = None
+        for keys_list in collected_keys:
+            if keys_list:
+                seq_dim = self._get_seq_dim(keys_list[0])
+                break
+        if seq_dim is None:
+            seq_dim = 2  # Default for Llama
+
         # Concatenate chunks for each layer (respects token dependency)
         past_key_values = []
         for layer_idx in range(self.num_layers):
@@ -346,11 +368,11 @@ class TokenRecoveryManager:
                 try:
                     concatenated_key = torch.cat(
                         collected_keys[layer_idx],
-                        dim=1,  # Concatenate along seq_len
+                        dim=seq_dim,
                     )
                     concatenated_value = torch.cat(
                         collected_values[layer_idx],
-                        dim=1,
+                        dim=seq_dim,
                     )
 
                     if layer_idx == 0:
@@ -395,8 +417,16 @@ class TokenRecoveryManager:
                 # Extract ONLY the NEW chunk's tokens
                 # past_key_values has all tokens: [prev ... new]
                 # We want: just the new (last chunk_size tokens)
-                new_key = key[:, -self.chunk_size:, :, :]
-                new_value = value[:, -self.chunk_size:, :, :]
+                if self._seq_dim is None:
+                    self._seq_dim = self._get_seq_dim(key)
+                seq_dim = self._seq_dim
+
+                if seq_dim == 2:
+                    new_key = key[:, :, -self.chunk_size:, :]
+                    new_value = value[:, :, -self.chunk_size:, :]
+                else:
+                    new_key = key[:, -self.chunk_size:, :, :]
+                    new_value = value[:, -self.chunk_size:, :, :]
                 layer_kv[layer_idx] = (new_key.detach(), new_value.detach())
 
             chunk = KVChunk(
