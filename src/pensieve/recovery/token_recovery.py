@@ -18,6 +18,7 @@ Design:
 import torch
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
+from transformers import DynamicCache
 
 from pensieve.core.types import (
     Request,
@@ -223,10 +224,15 @@ class TokenRecoveryManager:
 
             # 🔑 KEY STEP 3: Forward pass (layer dependency handled by model)
             try:
+                # Convert tuple to DynamicCache for HuggingFace models
+                past_kv_cache = None
+                if prev_cached_kv is not None:
+                    past_kv_cache = DynamicCache.from_legacy_cache(prev_cached_kv)
+
                 with torch.no_grad():
                     outputs = self.model(
                         chunk_tokens,
-                        past_key_values=prev_cached_kv,  # ← Full context!
+                        past_key_values=past_kv_cache,  # ← Full context as DynamicCache!
                         use_cache=True,
                         return_dict=True,
                     )
@@ -234,16 +240,22 @@ class TokenRecoveryManager:
                 # 🔑 KEY STEP 4: Store recovered KV for all layers
                 past_kv = outputs.past_key_values
                 if past_kv:
+                    # Convert DynamicCache back to tuple for storage
+                    if isinstance(past_kv, DynamicCache):
+                        past_kv_tuple = past_kv.to_legacy_cache()
+                    else:
+                        past_kv_tuple = past_kv
+
                     # ✅ DEBUG: Log dtype from model output
-                    if past_kv and len(past_kv) > 0:
-                        k, v = past_kv[0]
+                    if past_kv_tuple and len(past_kv_tuple) > 0:
+                        k, v = past_kv_tuple[0]
                         if k is not None:
                             print(f"      [dtype-check] Model output KV: key={k.dtype}, value={v.dtype}")
 
                     self._store_recovered_chunks(
                         session_id=session_id,
                         chunk_id=dropped_chunk_id,
-                        past_key_values=past_kv,
+                        past_key_values=past_kv_tuple,
                         num_prev_tokens=start_token_idx,
                         num_layers=self.num_layers,
                     )
