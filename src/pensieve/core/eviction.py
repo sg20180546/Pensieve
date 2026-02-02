@@ -207,13 +207,15 @@ class RetentionValuePolicy:
         ✅ CRITICAL: Pass cache parameter to ensure consistent position weights
            across multi-turn conversations!
 
+        ✅ CRITICAL: Skips pinned chunks to prevent eviction during batch execution.
+
         Args:
             chunks: List of chunks available to evict
             target_bytes: Target amount of memory to free
-            cache: TwoTierCache instance (optional, for getting SessionMetadata)
+            cache: TwoTierCache instance (optional, for getting SessionMetadata and pinning status)
 
         Returns:
-            List of chunk keys to evict
+            List of chunk keys to evict (excludes pinned chunks)
         """
         ranked = self.rank_chunks_for_eviction(chunks, cache=cache)
 
@@ -224,8 +226,14 @@ class RetentionValuePolicy:
             if freed >= target_bytes:
                 break
 
+            # ✅ CRITICAL: Skip pinned chunks (cannot evict while session is executing)
+            if cache is not None and hasattr(cache, 'is_pinned'):
+                if cache.is_pinned(chunk_key):
+                    continue
+
             # Find the chunk object to get its size
             chunk = next((c for c in chunks if c.key == chunk_key), None)
+
             if chunk:
                 to_evict.append(chunk_key)
                 freed += chunk.size_bytes
