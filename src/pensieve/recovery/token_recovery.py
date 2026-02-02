@@ -540,38 +540,58 @@ class BatchedRecoveryManager:
     def recover_batch(
         self,
         requests: List[Request],
+        chunks_to_recompute: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Optional[RecoveryPlan]]:
         """Recover dropped tokens for multiple requests.
 
-        CRITICAL: Sessions are independent
-        - Each session's recovery is isolated
-        - No cross-session dependencies or interference
-        - Pinning ensures dropped session chunks are protected during other sessions' recovery
-
-        Algorithm:
-        1. For each request (session):
-           - Create recovery plan (identify dropped chunks)
-           - Recompute ONLY that session's dropped chunks
-           - Other pinned sessions' chunks are protected (cannot be evicted)
-           - Store recovered chunks in shared GPU cache
+        Uses pre-computed chunks_to_recompute from cache_plan to avoid
+        redundant scanning and ensure consistency with the eviction plan.
 
         Args:
             requests: List of requests (from different sessions)
+            chunks_to_recompute: Pre-computed {session_id: [chunk_keys]} from cache_plan.
+                If None, falls back to scanning (legacy behavior).
 
         Returns:
             Dict mapping request_id to recovery plan (or None)
         """
         recovery_plans = {}
+        print("recover_batch")
 
         for req in requests:
-            plan = self.recovery_manager.create_recovery_plan(req)
-            recovery_plans[req.request_id] = plan
+            session_id = req.session_id
 
-            if plan:
-                # ✅ CRITICAL: Recompute ONLY this session's dropped chunks
-                # Other sessions' chunks are protected by pinning (cannot be evicted)
+            # Use pre-computed dropped chunk list if available
+            if chunks_to_recompute and session_id in chunks_to_recompute:
+                dropped_chunk_keys = chunks_to_recompute[session_id]
+                # Extract position IDs from chunk keys ("session:chunk:pos" → pos)
+                dropped_positions = []
+                for ck in dropped_chunk_keys:
+                    parts = ck.split(":")
+                    if len(parts) >= 3:
+                        dropped_positions.append(int(parts[2]))
+                dropped_positions.sort()
+
+                if dropped_positions:
+                    raw_tokens = self.recovery_manager._fetch_raw_tokens(
+                        session_id, dropped_positions
+                    )
+                    plan = RecoveryPlan(
+                        dropped_positions=dropped_positions,
+                        raw_tokens=raw_tokens if raw_tokens is not None else torch.tensor([], dtype=torch.long),
+                        session_id=session_id,
+                    )
+                else:
+                    plan = None
+            else:
+                # Fallback: scan cache for dropped chunks
+                plan = self.recovery_manager.create_recovery_plan(req)
+
+            recovery_plans[req.request_id] = plan
+            print("plan", plan)
+            if plan and plan.raw_tokens is not None and len(plan.raw_tokens) > 0:
                 self.recovery_manager.recompute_dropped_chunks(
-                    session_id=req.session_id,  # ← Pass session ID explicitly
+                    session_id=session_id,
                     recovery_plan=plan,
                 )
 
