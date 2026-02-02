@@ -382,7 +382,7 @@ class TokenRecoveryManager:
                     
                 except Exception as e:
                     print(f"      ❌ Error concatenating layer {layer_idx}: {e}")
-                    print(past_key_values)
+                    # print(past_key_values)
                     return None
 
         return tuple(past_key_values)
