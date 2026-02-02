@@ -377,7 +377,7 @@ class TokenRecoveryManager:
 
                     if layer_idx == 0:
                         print(f"      [dtype-check] Concatenated KV for recovery: key={concatenated_key.dtype}, value={concatenated_value.dtype}")
-                    print(concatenated_key.shape, concatenated_value.shape)
+                    # print(concatenated_key.shape, concatenated_value.shape)
                     past_key_values.append((concatenated_key, concatenated_value))
                     
                 except Exception as e:
