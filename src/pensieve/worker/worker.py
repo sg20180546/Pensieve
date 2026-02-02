@@ -146,10 +146,11 @@ class Worker:
             report.append("⚠️  pensieve_cache is empty (no chunks stored)")
             return "\n".join(report)
 
-        # 1. Get all chunks for this session from cache manager
+        # 1. Get snapshots of caches (quick, under lock)
         try:
-            gpu_cache = pensieve_cache.cache_manager.gpu_cache
-            cpu_cache = pensieve_cache.cache_manager.cpu_cache
+            with pensieve_cache.cache_manager.cache_lock:
+                gpu_cache = dict(pensieve_cache.cache_manager.gpu_cache)
+                cpu_cache = dict(pensieve_cache.cache_manager.cpu_cache)
 
             report.append(f"\n📊 Cache Storage Status:")
             report.append(f"   GPU cache size: {len(gpu_cache)} chunks")
@@ -690,16 +691,16 @@ class Worker:
             cache_plan: Cache operations to execute
             batch: Current batch (needed for recovery)
         """
-        print("_execute_cache_plan")
-        self.cache.print_all_sessions_status()
+        # print("_execute_cache_plan")
+        # self.cache.print_all_sessions_status()
         # 1. Swap out chunks first (GPU → CPU)
         for chunk_key in cache_plan.chunks_to_swap_out:
             try:
                 self.cache.swap_chunk_to_cpu(chunk_key)
             except Exception as e:
                 print(f"Warning: Failed to evict {chunk_key}: {e}")
-        print("SWAP OUT DONE")
-        self.cache.print_all_sessions_status()
+        # print("SWAP OUT DONE")
+        # self.cache.print_all_sessions_status()
         # 2. Swap in chunks (CPU → GPU) with cascade retry logic
         for chunk_key in cache_plan.chunks_to_swap_in:
             # Extract session_id from chunk_key (format: "session:chunk:id:layer:idx")
@@ -712,16 +713,17 @@ class Worker:
 
             while not swap_success:
                 # Try to swap chunk to GPU
-                print("SWAP to gpu CHUNK START")
+                # print("SWAP to gpu CHUNK START".chunk_key)
                 swap_success = self.cache.swap_chunk_to_gpu(chunk_key)
-                print("SWAP to gpu CHUNK swap_chunk_to_gpu")
+                # print("SWAP to gpu CHUNK swap_chunk_to_gpu")
                 # ✅ Debug: Print session's all chunks status
                 # self.cache.print_session_chunks_status(session_id)
                 # ✅ Debug: Print all sessions status
 
                 if not swap_success:
+
                     # Swap failed - check if it's recoverable
-                    print("SWAP to gpu CHUNK swap_chunk_to_gpu")
+                    print("not swap_success SWAP to gpu CHUNK swap_chunk_to_gpu",chunk_key)
                     session_total_size = self.cache.get_session_total_chunk_size(session_id)
                     gpu_capacity = self.cache.gpu_capacity_bytes
 
@@ -735,11 +737,45 @@ class Worker:
                         )
                     else:
                         # Session fits in GPU capacity but currently full
-                        # Retry with exponential backoff
+                        # Need to evict from GPU to make space
                         retry_count += 1
+                        if retry_count > max_retries:
+                            print(f"Max retries ({max_retries}) exceeded for {chunk_key}")
+                            return False
+
+                        # Get chunk being swapped (to determine size needed)
+                        try:
+                            # Chunk could be in CPU cache or DROPPED
+                            if chunk_key in self.cache.cpu_cache:
+                                chunk_to_swap = self.cache.cpu_cache[chunk_key]
+                            elif chunk_key in self.cache.dropped_chunks:
+                                chunk_to_swap = self.cache.dropped_chunks[chunk_key]
+                            else:
+                                print(f"Chunk {chunk_key} not found in CPU or DROPPED")
+                                return False
+
+                            needed_size = chunk_to_swap.size_bytes
+                        except Exception as e:
+                            print(f"Failed to get chunk size: {e}")
+                            return False
+
+                        # Use cache manager's eviction to free GPU space
+                        # This ensures proper locking and eviction policy
+                        try:
+                            freed = self.cache._evict_to_free_space(
+                                needed_size*10,
+                                CacheLocation.GPU
+                            )
+                            if freed < needed_size:
+                                print(f"Warning: Evicted {freed} bytes but needed {needed_size} bytes")
+                        except Exception as e:
+                            print(f"Eviction from GPU failed: {e}")
+                            # If we can't evict, we're stuck
+                            return False
+
                         if retry_count % 100 == 0:
                             # self.cache.print_session_chunks_status(session_id)
-                            self.cache.print_all_sessions_status()
+                            # self.cache.print_all_sessions_status()
 
                             print(f"  Retrying swap_in for {chunk_key} (attempt {retry_count}/{max_retries})")
 
@@ -749,8 +785,8 @@ class Worker:
                     f"Failed to swap in {chunk_key} after {max_retries} attempts. "
                     f"GPU cache may be fragmented or permanently full."
                 )
-        print("SWAP IN DONE")
-        self.cache.print_all_sessions_status()
+        # print("SWAP IN DONE")
+        # self.cache.print_all_sessions_status()
         # 3. ✅ Batch-level recovery with full context dependency
         # BatchedRecoveryManager handles multiple sessions efficiently,
         # respecting both layer-wise and token-wise dependencies
@@ -773,7 +809,7 @@ class Worker:
                     1 for plan in recovery_results.values() if plan is not None
                 )
                 print(f"✓ Recovered {recovered_count} requests with dropped chunks")
-            self.cache.print_all_sessions_status()
+            # self.cache.print_all_sessions_status()
     def _prepare_batch_inputs(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:

@@ -166,12 +166,14 @@ class PipelinedTransferManager:
         Returns:
             CUDA event marking transfer completion, or None if failed
         """
-        if chunk_key not in cache.cpu_cache:
-            return None
+        # PHASE 1: Check if chunk exists (quick, under lock)
+        with cache.cache_lock:
+            if chunk_key not in cache.cpu_cache:
+                return None
+            chunk = cache.cpu_cache[chunk_key]
+            chunk_size = chunk.size_bytes
 
-        chunk = cache.cpu_cache[chunk_key]
-
-        # Transfer on transfer_stream (non-blocking)
+        # PHASE 2: Transfer to GPU (no lock, CUDA stream handles synchronization)
         with torch.cuda.stream(self.transfer_stream):
             # Move tensors to GPU non-blocking
             chunk.key_tensor = chunk.key_tensor.to(
@@ -180,18 +182,22 @@ class PipelinedTransferManager:
             chunk.value_tensor = chunk.value_tensor.to(
                 self.device, non_blocking=True
             )
+            # Record event for synchronization
+            event = self.transfer_stream.record_event()
 
-            # Update cache structures
+        # PHASE 3: Update cache (quick, under lock)
+        with cache.cache_lock:
+            # Re-check chunk still exists (another thread might have moved it)
+            if chunk_key not in cache.cpu_cache:
+                return event
+
             cache.cpu_cache.pop(chunk_key, None)
             chunk.location = CacheLocation.GPU
             cache.gpu_cache[chunk_key] = chunk
 
             # Update statistics
-            cache.gpu_used_bytes += chunk.size_bytes
-            cache.cpu_used_bytes -= chunk.size_bytes
-
-            # Record event for synchronization
-            event = self.transfer_stream.record_event()
+            cache.gpu_used_bytes += chunk_size
+            cache.cpu_used_bytes -= chunk_size
 
         return event
 
