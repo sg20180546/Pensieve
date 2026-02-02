@@ -794,16 +794,17 @@ class Worker:
             # Each session's recovery respects:
             # - Layer dependency: previous layers' cached KV passed as context
             # - Token dependency: previous chunks loaded before current chunk recovery
-        recovery_results = self.batched_recovery_manager.recover_batch(
-            batch.requests,
-            chunks_to_recompute=cache_plan.chunks_to_recompute,
-        )
-
-        if recovery_results:
-            recovered_count = sum(
-                1 for plan in recovery_results.values() if plan is not None
+        if cache_plan.chunks_to_recompute and self.batched_recovery_manager and batch:
+            recovery_results = self.batched_recovery_manager.recover_batch(
+                batch.requests,
+                chunks_to_recompute=cache_plan.chunks_to_recompute,
             )
-            print(f"✓ Recovered {recovered_count} requests with dropped chunks")
+
+            if recovery_results:
+                recovered_count = sum(
+                    1 for plan in recovery_results.values() if plan is not None
+                )
+                print(f"✓ Recovered {recovered_count} requests with dropped chunks")
             # self.cache.print_all_sessions_status()
     def _prepare_batch_inputs(
         self, batch: Batch
