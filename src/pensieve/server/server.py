@@ -308,7 +308,7 @@ class PensieveServer:
             if request_id in batch_result.request_results:
                 result_dict = batch_result.request_results[request_id]
                 response = result_dict.get("response", "")
-                tokens_generated = result_dict.get("tokens_generated", 0)
+                tokens_generated = result_dict.get("generated_tokens", 0)
             else:
                 response = ""
                 tokens_generated = 0
@@ -327,7 +327,7 @@ class PensieveServer:
             # Add generated tokens to history (if available)
             if request_id in batch_result.request_results:
                 gen_tokens = batch_result.request_results[request_id].get(
-                    'tokens_generated', []
+                    'generated_tokens', []
                 )
                 if isinstance(gen_tokens, list):
                     self.session_token_histories[session_id].extend(gen_tokens)

@@ -270,7 +270,7 @@ class BatchResult:
     ttft_per_request: Dict[str, float] = field(default_factory=dict)  # {request_id: ttft in seconds}
     prefill_time: float = 0.0  # Time for prefill (cache plan + first forward pass)
     generation_time: float = 0.0  # Time for token generation (decode loop)
-
+# tokens_generated generated_tokens
 
 @dataclass
 class CacheStatistics:
