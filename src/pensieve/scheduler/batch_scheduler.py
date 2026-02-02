@@ -157,25 +157,20 @@ class BatchScheduler:
             # Get all available positions (chunks) for this session
             positions = self.cache.get_session_positions(session_id)
 
-            # Check each position and EACH LAYER's chunk status
+            # Check each position's chunk status (per-position chunks contain all layers)
             for pos in positions:
-                # ✅ Check all layers (each layer can have different availability)
-                for layer_idx in range(self.cache.num_layers):
-                    chunk_key = f"{session_id}:chunk:{pos}:layer:{layer_idx}"
-                    chunk = self.cache.get_chunk(chunk_key)
+                chunk_key = f"{session_id}:chunk:{pos}"
+                chunk = self.cache.get_chunk(chunk_key)
 
-                    if chunk is None:
-                        # Not found anywhere
-                        continue
+                if chunk is None:
+                    continue
 
-                    # ✅ Explicitly determine chunk location from chunk.location
-                    # (get_chunk now returns DROPPED chunks too)
-                    if chunk.location == CacheLocation.GPU:
-                        chunks_needed[chunk_key] = "GPU"
-                    elif chunk.location == CacheLocation.CPU:
-                        chunks_needed[chunk_key] = "CPU"
-                    elif chunk.location == CacheLocation.DROPPED:
-                        chunks_needed[chunk_key] = "DROPPED"
+                if chunk.location == CacheLocation.GPU:
+                    chunks_needed[chunk_key] = "GPU"
+                elif chunk.location == CacheLocation.CPU:
+                    chunks_needed[chunk_key] = "CPU"
+                elif chunk.location == CacheLocation.DROPPED:
+                    chunks_needed[chunk_key] = "DROPPED"
 
         # 2. Plan swaps based on memory pressure
         stats = self.cache.get_statistics()
@@ -251,7 +246,7 @@ class BatchScheduler:
         # Store dropped chunk info for worker to handle recovery
         for chunk_key, chunk in dropped_chunks.items():
             # Extract session_id from chunk_key
-            # Format: "session:chunk:id:layer:idx"
+            # Format: "session:chunk:id"
             parts = chunk_key.split(":")
             if len(parts) >= 2:
                 session_id = parts[0]
@@ -269,8 +264,10 @@ class BatchScheduler:
         # print("chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         # print("cache_plan.chunks_to_swap_in")
         # print("cache_plan.chunks_to_swap_out")
+        print("chunks_needing_space ",chunks_needing_space)
         print("cache_plan.chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         print("chunks_to_swap_out ",len(cache_plan.chunks_to_swap_out))
+        print(cache_plan.chunks_to_swap_out)
         print("chunks_to_recompute ",len(cache_plan.chunks_to_recompute))
         return cache_plan
 

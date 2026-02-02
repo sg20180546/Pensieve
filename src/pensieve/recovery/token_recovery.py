@@ -117,17 +117,14 @@ class TokenRecoveryManager:
         # Get all positions in this session
         session_positions = self.cache.get_session_positions(session_id)
 
-        # Check each position for dropped chunks
+        # Check each position for dropped chunks (per-position chunks)
         for pos in session_positions:
-            # Check layer 0 as representative (all layers at position drop together)
-            chunk_key = f"{session_id}:chunk:{pos}:layer:0"
+            chunk_key = f"{session_id}:chunk:{pos}"
             chunk = self.cache.get_chunk(chunk_key)
 
             if chunk is None:
-                # Not found anywhere
                 continue
             elif chunk.location == CacheLocation.DROPPED:
-                # ✅ Explicitly handle DROPPED chunks (returned by get_chunk)
                 dropped_positions.append(pos)
 
         if not dropped_positions:
@@ -271,10 +268,10 @@ class TokenRecoveryManager:
         the full context from chunks 0 to N-1 as past_key_values.
 
         Process:
-        1. For each layer (0 to num_layers-1):
-           - Load key, value tensors from all chunks 0..end_chunk_id-1
-           - Concatenate along seq_len dimension
-        2. Return as tuple of (key, value) per layer
+        1. Load per-position chunks in order
+        2. Extract each layer's KV from each position chunk
+        3. Concatenate along seq_len dimension per layer
+        4. Return as tuple of (key, value) per layer
 
         Args:
             session_id: Session ID
@@ -291,22 +288,27 @@ class TokenRecoveryManager:
         collected_keys = [[] for _ in range(self.num_layers)]
         collected_values = [[] for _ in range(self.num_layers)]
 
-        # Load chunks in order (respects token dependency)
+        # Load position chunks in order (respects token dependency)
         for chunk_id in range(start_chunk_id, end_chunk_id):
-            for layer_idx in range(self.num_layers):
-                chunk_key = f"{session_id}:chunk:{chunk_id}:layer:{layer_idx}"
+            chunk_key = f"{session_id}:chunk:{chunk_id}"
 
-                try:
-                    chunk = self.cache.get_chunk(chunk_key)
-                    if chunk is None:
-                        print(f"      ⚠️  Chunk {chunk_key} not found")
+            try:
+                chunk = self.cache.get_chunk(chunk_key)
+                if chunk is None or chunk.layer_kv is None:
+                    print(f"      ⚠️  Chunk {chunk_key} not found or has no tensors")
+                    continue
+
+                # Extract each layer's KV from this position chunk
+                for layer_idx in range(self.num_layers):
+                    if layer_idx not in chunk.layer_kv:
                         continue
 
-                    # Move to device (preserve original dtype)
-                    key_tensor = chunk.key_tensor.to(self.device)
-                    value_tensor = chunk.value_tensor.to(self.device)
+                    k, v = chunk.layer_kv[layer_idx]
 
-                    # ✅ DEBUG: Log dtype consistency
+                    # Move to device (preserve original dtype)
+                    key_tensor = k.to(self.device)
+                    value_tensor = v.to(self.device)
+
                     if chunk_id == 0 and layer_idx == 0:
                         print(f"      [dtype-check] Loaded KV: key={key_tensor.dtype}, value={value_tensor.dtype}")
 
@@ -319,9 +321,9 @@ class TokenRecoveryManager:
                     collected_keys[layer_idx].append(key_tensor)
                     collected_values[layer_idx].append(value_tensor)
 
-                except Exception as e:
-                    print(f"      ❌ Error loading {chunk_key}: {e}")
-                    return None
+            except Exception as e:
+                print(f"      ❌ Error loading {chunk_key}: {e}")
+                return None
 
         # Concatenate chunks for each layer (respects token dependency)
         past_key_values = []
@@ -339,7 +341,6 @@ class TokenRecoveryManager:
                         dim=1,
                     )
 
-                    # ✅ DEBUG: Log dtype after concatenation
                     if layer_idx == 0:
                         print(f"      [dtype-check] Concatenated KV for recovery: key={concatenated_key.dtype}, value={concatenated_value.dtype}")
 
@@ -358,7 +359,7 @@ class TokenRecoveryManager:
         num_prev_tokens: int,
         num_layers: int,
     ) -> None:
-        """Store recovered KV chunks for all layers.
+        """Store recovered KV as a single per-position chunk (all layers).
 
         Extracts the NEW chunk's KV from full past_key_values
         (which includes prev chunks + new chunk).
@@ -370,35 +371,33 @@ class TokenRecoveryManager:
             num_prev_tokens: Number of tokens in previous chunks
             num_layers: Number of model layers
         """
-        for layer_idx, (key, value) in enumerate(past_key_values):
-            if key is None or value is None:
-                continue
+        try:
+            # Bundle all layers' KV for this position
+            layer_kv = {}
+            for layer_idx, (key, value) in enumerate(past_key_values):
+                if key is None or value is None:
+                    continue
 
-            try:
                 # Extract ONLY the NEW chunk's tokens
                 # past_key_values has all tokens: [prev ... new]
                 # We want: just the new (last chunk_size tokens)
-                new_key = key[:, -self.chunk_size:, :, :]  # [1, chunk_size, heads, dim]
+                new_key = key[:, -self.chunk_size:, :, :]
                 new_value = value[:, -self.chunk_size:, :, :]
+                layer_kv[layer_idx] = (new_key.detach(), new_value.detach())
 
-                chunk = KVChunk(
-                    session_id=session_id,
-                    chunk_id=chunk_id,
-                    layer_idx=layer_idx,
-                    key_tensor=new_key.detach(),  # Keep on GPU
-                    value_tensor=new_value.detach(),  # Keep on GPU
-                    context_length=num_prev_tokens,  # Tokens before this chunk
-                    session_total_chunks=(num_prev_tokens + 2 * self.chunk_size - 1) // self.chunk_size,
-                    num_layers=num_layers,
-                )
+            chunk = KVChunk(
+                session_id=session_id,
+                chunk_id=chunk_id,
+                layer_kv=layer_kv,
+                context_length=num_prev_tokens,
+                session_total_chunks=(num_prev_tokens + 2 * self.chunk_size - 1) // self.chunk_size,
+                num_layers=num_layers,
+            )
 
-                self.cache.store_chunk(chunk, location=CacheLocation.GPU)
+            self.cache.store_chunk(chunk, location=CacheLocation.GPU)
 
-            except Exception as e:
-                print(
-                    f"      ❌ Failed to store layer {layer_idx} "
-                    f"for chunk {chunk_id}: {e}"
-                )
+        except Exception as e:
+            print(f"      ❌ Failed to store chunk {chunk_id}: {e}")
 
     def merge_for_prefill(
         self,

@@ -122,16 +122,14 @@ def test_basic_inference():
     num_heads = model.config.n_head
     head_dim = hidden_size // num_heads
 
-    # Create chunk for layer 0 (32 tokens)
+    # Create chunk with all layers' KV (32 tokens)
     k = torch.randn(1, 32, num_heads, head_dim, device='cpu')  # Store on CPU
     v = torch.randn(1, 32, num_heads, head_dim, device='cpu')
 
     chunk = KVChunk(
         session_id="session_1",
         chunk_id=0,
-        layer_idx=0,  # First layer
-        key_tensor=k,
-        value_tensor=v,
+        layer_kv={0: (k, v)},  # Per-position chunk with layer 0
         context_length=0,
         session_total_chunks=5,  # Assume 5 chunks total in session
         num_layers=num_layers,

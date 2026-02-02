@@ -75,10 +75,7 @@ class TwoTierCache:
         num_layers: int,
         location: CacheLocation = CacheLocation.GPU,
     ) -> bool:
-        """Store KV cache for all layers at a specific position.
-
-        This is the primary method for storing KV cache from a forward pass.
-        Creates separate KVChunk objects for each layer (layer-wise chunking).
+        """Store KV cache for all layers at a specific position as a single chunk.
 
         Args:
             session_id: Session/conversation ID
@@ -90,24 +87,17 @@ class TwoTierCache:
             location: Where to store (GPU or CPU)
 
         Returns:
-            True if all layers stored successfully, False if space unavailable
+            True if stored successfully, False if space unavailable
         """
-        success = True
-        for layer_idx, (k, v) in layer_kv_dict.items():
-            chunk = KVChunk(
-                session_id=session_id,
-                chunk_id=chunk_id,
-                layer_idx=layer_idx,
-                key_tensor=k,
-                value_tensor=v,
-                context_length=context_length,
-                session_total_chunks=session_total_chunks,
-                num_layers=num_layers,
-            )
-            if not self.store_chunk(chunk, location):
-                success = False
-
-        return success
+        chunk = KVChunk(
+            session_id=session_id,
+            chunk_id=chunk_id,
+            layer_kv=layer_kv_dict,
+            context_length=context_length,
+            session_total_chunks=session_total_chunks,
+            num_layers=num_layers,
+        )
+        return self.store_chunk(chunk, location)
 
     def store_chunk(
         self,
@@ -135,29 +125,29 @@ class TwoTierCache:
         """
         chunk_size = chunk.size_bytes
         chunk_key = chunk.key
-        # capacity = self.gpu_capacity_bytes if location == CacheLocation.GPU else self.cpu_capacity_bytes
+        capacity = self.gpu_capacity_bytes if location == CacheLocation.GPU else self.cpu_capacity_bytes
 
         # PHASE 1: Check space needed (quick, under lock)
-        # with self.cache_lock:
-        #     current_used = self.gpu_used_bytes if location == CacheLocation.GPU else self.cpu_used_bytes
-        #     need_eviction = (current_used + chunk_size > capacity)
+        with self.cache_lock:
+            current_used = self.gpu_used_bytes if location == CacheLocation.GPU else self.cpu_used_bytes
+            need_eviction = (current_used + chunk_size > capacity)
 
         # # PHASE 2: Evict if needed (heavy work, NO lock)
-        # if need_eviction:
-        #     freed = self._evict_to_free_space(chunk_size, location)
-        #     if freed < chunk_size:
-        #         # Eviction failed, try cascade
-        #         if location == CacheLocation.GPU:
-        #             success = self._demote_to_cpu_with_eviction(chunk)
-        #             if success:
+        if need_eviction:
+            freed = self._evict_to_free_space(chunk_size, location)
+            if freed < chunk_size:
+                # Eviction failed, try cascade
+                if location == CacheLocation.GPU:
+                    success = self._demote_to_cpu_with_eviction(chunk)
+                    if success:
                         
-        #                 return True
-        #             else:
-        #                 print(f"Warning: Could not store chunk {chunk_key} - all tiers full")
-        #                 return False
-        #         else:
-        #             print(f"Warning: Could not free enough space for chunk {chunk_key} - CPU full")
-        #             return False
+                        return True
+                    else:
+                        print(f"Warning: Could not store chunk {chunk_key} - all tiers full")
+                        return False
+                else:
+                    print(f"Warning: Could not free enough space for chunk {chunk_key} - CPU full")
+                    return False
 
         # PHASE 3: Store chunk (quick, under lock)
         with self.cache_lock:
@@ -201,53 +191,41 @@ class TwoTierCache:
     ) -> Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]]:
         """Get KV tensors for all layers at a specific position.
 
-        This gathers all layer chunks at a position and returns them as
-        a layer_idx -> (key, value) dictionary.
+        Direct O(1) lookup by chunk key.
 
         Args:
             session_id: Session ID
             chunk_id: Position in session
 
         Returns:
-            Dict[layer_idx: (key_tensor, value_tensor)] if all layers found,
-            None if any layer is missing or evicted
+            Dict[layer_idx: (key_tensor, value_tensor)] if found,
+            None if missing or evicted
         """
-        # PHASE 1: Snapshot caches (quick, under lock)
+        chunk_key = f"{session_id}:chunk:{chunk_id}"
+
         with self.cache_lock:
-            gpu_snapshot = dict(self.gpu_cache)
-            cpu_snapshot = dict(self.cpu_cache)
+            # Check GPU cache
+            if chunk_key in self.gpu_cache:
+                chunk = self.gpu_cache[chunk_key]
+                chunk.update_access_time()
+                self.stats.gpu_hit_count += 1
+                return chunk.layer_kv
 
-        # PHASE 2: Search in snapshots (no lock, can iterate safely)
-        layer_kv = {}
-        for cache_dict in [gpu_snapshot, cpu_snapshot]:
-            for chunk_key, chunk in cache_dict.items():
-                if (chunk.session_id == session_id and
-                    chunk.chunk_id == chunk_id):
-                    layer_kv[chunk.layer_idx] = (chunk.key_tensor, chunk.value_tensor)
+            # Check CPU cache
+            if chunk_key in self.cpu_cache:
+                chunk = self.cpu_cache[chunk_key]
+                chunk.update_access_time()
+                self.stats.cpu_hit_count += 1
+                return chunk.layer_kv
 
-        # PHASE 3: Update access time and stats (quick, under lock)
-        with self.cache_lock:
-            if layer_kv:
-                # Update access times for found chunks
-                for cache_dict in [self.gpu_cache, self.cpu_cache]:
-                    for chunk in cache_dict.values():
-                        if (chunk.session_id == session_id and
-                            chunk.chunk_id == chunk_id):
-                            chunk.update_access_time()
-                            if cache_dict is self.gpu_cache:
-                                self.stats.gpu_hit_count += 1
-                            else:
-                                self.stats.cpu_hit_count += 1
-            else:
-                self.stats.miss_count += 1
-
-        return layer_kv if layer_kv else None
+            self.stats.miss_count += 1
+            return None
 
     def get_chunk(self, chunk_key: str) -> Optional[KVChunk]:
         """Get a single chunk by key (internal method, use get_chunks_for_position for retrieval).
 
         Args:
-            chunk_key: Key of chunk to retrieve (format: "session:chunk:id:layer:idx")
+            chunk_key: Key of chunk to retrieve (format: "session:chunk:id")
 
         Returns:
             KVChunk if found, None otherwise
@@ -281,9 +259,6 @@ class TwoTierCache:
 
     def get_session_positions(self, session_id: str) -> List[int]:
         """Get all chunk positions (chunk_ids) for a session.
-
-        Since chunks are now layer-indexed, multiple chunks exist per position.
-        This returns the unique positions.
 
         Args:
             session_id: Session ID
@@ -365,9 +340,6 @@ class TwoTierCache:
         - Removes chunks from CPU cache
         - Removes chunks from DROPPED list
         - Clears session_chunks tracking
-
-        Since chunks are layer-indexed, this evicts all layer variants
-        for all positions in the session.
 
         Args:
             session_id: Session ID to evict
@@ -466,18 +438,13 @@ class TwoTierCache:
                 # Move from CPU to DROPPED
                 evict_chunk = self.cpu_cache.pop(evict_key)
                 evict_chunk.location = CacheLocation.DROPPED
+                cpu_freed += evict_chunk.size_bytes
 
                 # Release tensor memory to free CPU space
-                if evict_chunk.key_tensor is not None:
-                    del evict_chunk.key_tensor
-                    evict_chunk.key_tensor = None
-                if evict_chunk.value_tensor is not None:
-                    del evict_chunk.value_tensor
-                    evict_chunk.value_tensor = None
+                evict_chunk.drop_tensors()
 
                 # Store metadata only (tensors released)
                 self.dropped_chunks[evict_key] = evict_chunk
-                cpu_freed += evict_chunk.size_bytes
 
             # Update memory tracking - space is actually freed
             self.cpu_used_bytes -= cpu_freed
@@ -684,18 +651,14 @@ class TwoTierCache:
 
                                 drop_chunk = self.cpu_cache.pop(drop_key)
                                 drop_chunk.location = CacheLocation.DROPPED
+                                drop_size = drop_chunk.size_bytes
 
                                 # Release tensor memory to free CPU space
-                                if drop_chunk.key_tensor is not None:
-                                    del drop_chunk.key_tensor
-                                    drop_chunk.key_tensor = None
-                                if drop_chunk.value_tensor is not None:
-                                    del drop_chunk.value_tensor
-                                    drop_chunk.value_tensor = None
+                                drop_chunk.drop_tensors()
 
                                 # Store metadata only (tensors released)
                                 self.dropped_chunks[drop_key] = drop_chunk
-                                cpu_freed += drop_chunk.size_bytes
+                                cpu_freed += drop_size
                                 # ✅ Keep in session_chunks (chunk metadata still exists)
 
                                 if cpu_freed >= chunk.size_bytes:
@@ -715,48 +678,32 @@ class TwoTierCache:
                             chunk.location = CacheLocation.DROPPED
 
                             # Release tensor memory
-                            if chunk.key_tensor is not None:
-                                del chunk.key_tensor
-                                chunk.key_tensor = None
-                            if chunk.value_tensor is not None:
-                                del chunk.value_tensor
-                                chunk.value_tensor = None
+                            chunk.drop_tensors()
 
                             self.dropped_chunks[chunk_key] = chunk
-                            self.cpu_used_bytes -= chunk.size_bytes
-                            # ✅ Keep in session_chunks (metadata still exists)
 
                 else:
                     # Evicting from CPU → DROPPED tier
                     chunk.location = CacheLocation.DROPPED
+                    chunk_size_before_drop = chunk.size_bytes
 
                     # Release tensor memory
-                    if chunk.key_tensor is not None:
-                        del chunk.key_tensor
-                        chunk.key_tensor = None
-                    if chunk.value_tensor is not None:
-                        del chunk.value_tensor
-                        chunk.value_tensor = None
+                    chunk.drop_tensors()
 
                     self.dropped_chunks[chunk_key] = chunk
-                    self.cpu_used_bytes -= chunk.size_bytes
-                    # ✅ Keep in session_chunks (metadata still exists)
-                    # (Will be cleaned up when session ends via evict_session())
+                    self.cpu_used_bytes -= chunk_size_before_drop
 
             self._update_statistics()
             return freed
 
     def get_session_chunks(self, session_id: str) -> List[KVChunk]:
-        """Get all chunks for a session (all layers, all positions).
-
-        With layer-wise chunking, returns chunks for all positions and all layers
-        in the session.
+        """Get all chunks for a session (all positions).
 
         Args:
             session_id: Session ID
 
         Returns:
-            List of KVChunk objects for session (order: position, then layer)
+            List of KVChunk objects for session (sorted by position)
         """
         with self.cache_lock:
             chunks = []
@@ -776,17 +723,13 @@ class TwoTierCache:
             return chunks
 
     def get_checkerboard_summary(self) -> str:
-        """Get a text summary of cache state in checkerboard view.
+        """Get a text summary of cache state per position.
 
         Visualization:
-                    Layer0  Layer1  Layer2 ... Layer39
-        Session1:    ■       ■       ■             ■
-        Session2:    ▓       ▓       ▓             ▓   (CPU)
-        Session3:    ░       ░       ░             ░   (DROPPED)
+        Session1: P0:GPU P1:GPU P2:CPU P3:DROPPED
+        Session2: P0:GPU P1:CPU
 
-        ■ = GPU (hot)
-        ▓ = CPU (warm)
-        ░ = DROPPED (cold)
+        Shows each position chunk's tier location.
         """
         sessions = set()
         for cache_dict in [self.gpu_cache, self.cpu_cache, self.dropped_chunks]:
@@ -796,29 +739,17 @@ class TwoTierCache:
         sessions = sorted(list(sessions))
 
         lines = []
-        lines.append("Cache Checkerboard View (Layer-wise):")
+        lines.append("Cache Position View:")
         lines.append("")
 
         for session_id in sessions:
             session_chunks = self.get_session_chunks(session_id)
 
-            # Group by position
-            positions = {}
-            for chunk in session_chunks:
-                if chunk.chunk_id not in positions:
-                    positions[chunk.chunk_id] = {}
-                positions[chunk.chunk_id][chunk.layer_idx] = chunk
-
-            # Format: session_id | chunk0 | chunk1 | chunk2 | ...
+            # Format: session_id | P0:GPU | P1:CPU | ...
             line = f"{session_id:15} |"
-            for pos in sorted(positions.keys()):
-                # Just show summary per position
-                num_layers_cached = len(positions[pos])
-                if num_layers_cached == chunk.num_layers:
-                    status = "✓"  # All layers cached
-                else:
-                    status = f"{num_layers_cached}/{chunk.num_layers}"
-                line += f" P{pos}:{status} |"
+            for chunk in sorted(session_chunks, key=lambda c: c.chunk_id):
+                tier = chunk.location.value.upper()
+                line += f" P{chunk.chunk_id}:{tier} |"
 
             lines.append(line)
 

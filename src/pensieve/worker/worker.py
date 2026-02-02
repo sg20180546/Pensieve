@@ -182,14 +182,14 @@ class Worker:
                 report.append(f"\n📍 GPU Chunks (from newest to oldest):")
                 total_gpu_tokens = 0
                 for chunk in sorted(session_chunks_gpu, key=lambda c: -c.chunk_id):
-                    num_tokens = chunk.num_tokens if hasattr(chunk, 'num_tokens') else self._get_seq_len_from_kv(chunk.key_tensor)
+                    num_tokens = chunk.num_tokens
                     total_gpu_tokens += num_tokens
+                    num_layers_stored = len(chunk.layer_kv) if chunk.layer_kv else 0
                     report.append(
                         f"   chunk_id={chunk.chunk_id:3d} | "
-                        f"layer={chunk.layer_idx:2d} | "
+                        f"layers={num_layers_stored} | "
                         f"tokens={num_tokens:3d} | "
-                        f"shape={tuple(chunk.key_tensor.shape)} | "
-                        f"dtype={chunk.key_tensor.dtype}"
+                        f"size={chunk.size_bytes / 1024:.1f}KB"
                     )
                 report.append(f"   └─ Total GPU tokens: {total_gpu_tokens}")
 
@@ -198,14 +198,14 @@ class Worker:
                 report.append(f"\n📍 CPU Chunks (from newest to oldest):")
                 total_cpu_tokens = 0
                 for chunk in sorted(session_chunks_cpu, key=lambda c: -c.chunk_id):
-                    num_tokens = chunk.num_tokens if hasattr(chunk, 'num_tokens') else self._get_seq_len_from_kv(chunk.key_tensor)
+                    num_tokens = chunk.num_tokens
                     total_cpu_tokens += num_tokens
+                    num_layers_stored = len(chunk.layer_kv) if chunk.layer_kv else 0
                     report.append(
                         f"   chunk_id={chunk.chunk_id:3d} | "
-                        f"layer={chunk.layer_idx:2d} | "
+                        f"layers={num_layers_stored} | "
                         f"tokens={num_tokens:3d} | "
-                        f"shape={tuple(chunk.key_tensor.shape)} | "
-                        f"dtype={chunk.key_tensor.dtype}"
+                        f"size={chunk.size_bytes / 1024:.1f}KB"
                     )
                 report.append(f"   └─ Total CPU tokens: {total_cpu_tokens}")
 
@@ -217,13 +217,7 @@ class Worker:
                 report.append(f"\n📈 Cache Statistics:")
                 report.append(f"   Max chunk_id: {max_chunk_id}")
                 report.append(f"   Expected ~total tokens: {expected_total_tokens}")
-
-                # Check for layer coverage
-                layers_in_cache = set()
-                for chunk in all_chunks:
-                    layers_in_cache.add(chunk.layer_idx)
-                report.append(f"   Layers covered: {sorted(layers_in_cache)}")
-                report.append(f"   Number of layers: {len(layers_in_cache)}")
+                report.append(f"   Positions: {len(all_chunks)}")
 
             # 6. Check session metadata
             metadata = pensieve_cache.cache_manager.get_session_metadata(session_id)
@@ -703,7 +697,7 @@ class Worker:
         # self.cache.print_all_sessions_status()
         # 2. Swap in chunks (CPU → GPU) with cascade retry logic
         for chunk_key in cache_plan.chunks_to_swap_in:
-            # Extract session_id from chunk_key (format: "session:chunk:id:layer:idx")
+            # Extract session_id from chunk_key (format: "session:chunk:id")
             session_id = chunk_key.split(':')[0]
 
             # Try to swap in with retry logic
@@ -1094,282 +1088,143 @@ class Worker:
             # ✅ DEBUG: Log after all values calculated
             # logger.debug(f"[DEBUG _store_new_kv_chunks] metadata exists: {metadata is not None}, actual_context_before={actual_context_before}, total_tokens={total_tokens}, total_chunks={total_chunks}")
 
-            # Process each layer and split into 32-token chunks
-            # for layer_idx, (k, v) in enumerate(past_key_values):
-            # print("len(past_key_values)",len(past_key_values))
+            # Process all layers and split into 32-token chunks (per-position)
+            # Step 1: Extract new KV for ALL layers
+            all_layer_new_kv = {}  # {layer_idx: (new_key, new_value)}
+            seq_dim = None
+
             for layer_idx in range(len(past_key_values)):
                 k, v = past_key_values[layer_idx]
                 if k is None or v is None:
-                    print("@@@ error kv none",layer_idx)
+                    print("@@@ error kv none", layer_idx)
                     continue
-                # print("sj @@@@ layer_idx",layer_idx)
-                # ✅ DEBUG: Print actual shapes to diagnose mismatch
-                if layer_idx == 0:
-                    # logger.debug(f"Layer {layer_idx}: k.shape={k.shape}, v.shape={v.shape}")
-                    # logger.debug(f"num_generated={num_generated}, fill_last={fill_last}")
-                    if fill_last > 0 and last_chunk_id >= 0:
-                        last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
-                        last_chunk = self.cache.get_chunk(last_chunk_key)
-                        # if last_chunk:
-                        #     logger.debug(f"last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
-
-                # k, v shapes: [batch, num_heads, seq_len, head_dim]
-                # (HuggingFace format for some models/versions)
-                # seq_len (dim=2) includes everything: prev_context + input + new_generated
 
                 # Calculate where new tokens start
-                total_seq_len = self._get_seq_len_from_kv(k)  # Total sequence length
+                total_seq_len = self._get_seq_len_from_kv(k)
 
-                # ✅ CRITICAL FIX: On Turn 1 (no existing chunks), store ALL tokens, not just generated
-                # Turn 1: existing_positions=[] → store everything (input + generated)
-                # Turn 2+: existing_positions=[...] → store only newly generated
                 if not existing_positions:
-                    # Turn 1: Store ALL tokens from the beginning
                     new_tokens_start = 0
                 else:
-                    # Turn 2+: Store only newly generated tokens
                     new_tokens_start = max(0, total_seq_len - num_generated)
-                    # ⚠️ CRITICAL DEBUG: If calculation resulted in negative, log it
                     if total_seq_len < num_generated:
                         logger.error(f"⚠️ WARNING: total_seq_len ({total_seq_len}) < num_generated ({num_generated})!")
-                        logger.error(f"   This means model output is smaller than expected. Check if cache was passed correctly.")
-                        logger.error(f"   Using new_tokens_start=0 (will store ALL tokens, may include cached)")
-                        # Store all tokens as fallback
                         new_tokens_start = 0
 
-                # Extract tokens to store - use correct dimension based on tensor format
-                seq_dim = self._get_seq_dim_from_kv(k)
+                # Detect seq_dim from first layer
+                if seq_dim is None:
+                    seq_dim = self._get_seq_dim_from_kv(k)
 
                 if seq_dim == 2:
-                    # Gemma format: [batch, heads, seq, head_dim]
-                    new_key = k[:, :, new_tokens_start:, :]  # [batch, heads, tokens_to_store, head_dim]
-                    new_value = v[:, :, new_tokens_start:, :]  # [batch, heads, tokens_to_store, head_dim]
+                    new_key = k[:, :, new_tokens_start:, :]
+                    new_value = v[:, :, new_tokens_start:, :]
                 else:
-                    # Standard format: [batch, seq, heads, head_dim]
-                    new_key = k[:, new_tokens_start:, :, :]  # [batch, tokens_to_store, heads, head_dim]
-                    new_value = v[:, new_tokens_start:, :, :]  # [batch, tokens_to_store, heads, head_dim]
+                    new_key = k[:, new_tokens_start:, :, :]
+                    new_value = v[:, new_tokens_start:, :, :]
 
-                # ✅ DEBUG for Turn 2+: Verify extracted token count
-                if existing_positions and layer_idx == 0:
-                    tokens_extracted = self._get_seq_len_from_kv(new_key)
-                    logger.debug(f"[DEBUG TURN 2+] session_id={session_id}: num_generated={num_generated}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, tokens_extracted={tokens_extracted}")
-                    if tokens_extracted != num_generated:
-                        logger.error(f"❌ TURN 2+ TOKEN MISMATCH! Expected to extract {num_generated} new tokens but got {tokens_extracted}")
+                all_layer_new_kv[layer_idx] = (new_key, new_value)
 
-                # ✅ RECALCULATE remaining_new for Turn 1 case
-                if not existing_positions:
-                    # Turn 1: We're storing ALL tokens (total_seq_len), not just generated
-                    tokens_stored = self._get_seq_len_from_kv(new_key)  # Actual tokens in extracted tensor
-                    if layer_idx == 0:  # Only recalculate once per request
-                        logger.debug(f"[DEBUG TURN 1] session_id={session_id}, layer_idx={layer_idx}: input_len={input_len}, num_generated={num_generated}")
-                        logger.debug(f"[DEBUG TURN 1] k.shape={k.shape}, total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}")
-                        logger.debug(f"[DEBUG TURN 1] new_key.shape={new_key.shape}, tokens_stored={tokens_stored}")
+            if not all_layer_new_kv:
+                continue
 
-                        # ✅ CRITICAL: Compare expected vs actual token counts
-                        # if tokens_stored != expected_total_tokens:
-                        #     logger.error(f"❌ TOKEN LOSS DETECTED! Expected {expected_total_tokens} tokens ({input_len} input + {num_generated} generated) but model output has {tokens_stored} tokens. LOSS: {expected_total_tokens - tokens_stored} token(s)")
-                        # else:
-                        #     logger.debug(f"✅ Token count matches: {tokens_stored} tokens stored")
+            # Debug: verify token count from first layer
+            first_layer_key = next(iter(all_layer_new_kv.values()))[0]
+            if existing_positions:
+                tokens_extracted = self._get_seq_len_from_kv(first_layer_key)
+                logger.debug(f"[DEBUG TURN 2+] session_id={session_id}: num_generated={num_generated}, tokens_extracted={tokens_extracted}")
+            else:
+                # Turn 1: recalculate remaining_new based on actual tokens
+                tokens_stored = self._get_seq_len_from_kv(first_layer_key)
+                logger.debug(f"[DEBUG TURN 1] session_id={session_id}: tokens_stored={tokens_stored}, fill_last={fill_last}")
+                remaining_new = tokens_stored - fill_last
+                total_tokens = tokens_stored
+                total_chunks = (total_tokens + chunk_size - 1) // chunk_size
 
-                        remaining_new_old = remaining_new
-                        remaining_new = tokens_stored - fill_last
-                        # Update total_tokens to reflect actual stored tokens
-                        total_tokens = tokens_stored
-                        total_chunks = (total_tokens + chunk_size - 1) // chunk_size
-                        logger.debug(f"[DEBUG TURN 1] Before recalc: remaining_new={remaining_new_old}, fill_last={fill_last}")
-                        logger.debug(f"[DEBUG TURN 1] Recalculated: remaining_new={remaining_new}, total_tokens={total_tokens}, total_chunks={total_chunks}")
+            # Step 2: Handle last chunk merge (all layers simultaneously)
+            if fill_last > 0 and last_chunk_id >= 0:
+                last_chunk_key = f"{session_id}:chunk:{last_chunk_id}"
+                last_chunk = self.cache.get_chunk(last_chunk_key)
 
-                # ✅ DEBUG: Check batch size of extracted new tokens (Scenario 1, 2, 3)
-                # if layer_idx == 0:
-                #     logger.debug(f"_store_new_kv_chunks] After extraction: new_key.shape={new_key.shape}, new_value.shape={new_value.shape}")
-                #     logger.debug(f"_store_new_kv_chunks] dtype: new_key={new_key.dtype}, new_value={new_value.dtype}")
-                #     if new_key.shape[0] == 0:
-                #         logger.error(f"❌ ERROR FOUND: new_key batch size is 0!")
-                #         logger.error(f"   k.shape={k.shape} (batch={k.shape[0]})")
-                #         logger.error(f"   total_seq_len={total_seq_len}, new_tokens_start={new_tokens_start}, num_generated={num_generated}")
-                #         logger.error(f"   This suggests k.shape[0] was already 0 from model output (Scenario 1 or 2)")
+                if last_chunk and last_chunk.layer_kv:
+                    merged_layer_kv = {}
+                    for layer_idx, (new_k, new_v) in all_layer_new_kv.items():
+                        if layer_idx in last_chunk.layer_kv:
+                            old_k, old_v = last_chunk.layer_kv[layer_idx]
+                            if seq_dim == 2:
+                                fill_k = new_k[:, :, :fill_last, :]
+                                fill_v = new_v[:, :, :fill_last, :]
+                            else:
+                                fill_k = new_k[:, :fill_last, :, :]
+                                fill_v = new_v[:, :fill_last, :, :]
 
-                # ✅ CRITICAL: Handle last chunk merge
-                if fill_last > 0 and last_chunk_id >= 0:
-                    # Get last chunk to update it
-                    last_chunk_key = f"{session_id}:chunk:{last_chunk_id}:layer:{layer_idx}"
-                    last_chunk = self.cache.get_chunk(last_chunk_key)
-                    
-                    # if layer_idx == 0:
-                    #     logger.debug(f"[DEBUG MERGE] session_id={session_id}: fill_last={fill_last}, last_chunk exists={last_chunk is not None}")
+                            merged_k = torch.cat([old_k, fill_k], dim=seq_dim).detach()
+                            merged_v = torch.cat([old_v, fill_v], dim=seq_dim).detach()
 
-                    if last_chunk:
-                        # Extract tokens to fill last chunk (use correct dimension based on tensor format)
-                        if seq_dim == 2:
-                            # Gemma format: [batch, heads, seq, head_dim]
-                            fill_key = new_key[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
-                            fill_value = new_value[:, :, :fill_last, :]  # [batch, heads, fill_last, head_dim]
-                        else:
-                            # Standard format: [batch, seq, heads, head_dim]
-                            fill_key = new_key[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
-                            fill_value = new_value[:, :fill_last, :, :]  # [batch, fill_last, heads, head_dim]
+                            if merged_k.shape[-1] == 0:
+                                raise ValueError(f"Merge created tensor with head_dim=0: {merged_k.shape}")
 
-                        # ✅ Chunks are stored on GPU for performance
-                        # Both fill_key and last_chunk.key_tensor are on GPU
-                        # No need to move to CPU - keep everything on GPU for faster merging
+                            merged_layer_kv[layer_idx] = (merged_k, merged_v)
 
-                        # ✅ DEBUG: Capture the merge scenario (just before error)
-                        # if layer_idx == 0:
-                        #     logger.debug(f"_store_new_kv_chunks] About to merge:")
-                        #     logger.debug(f"   last_chunk.key_tensor.shape={last_chunk.key_tensor.shape} (batch={last_chunk.key_tensor.shape[0]})")
-                        #     logger.debug(f"   fill_key.shape={fill_key.shape} (batch={fill_key.shape[0]})")
-                        #     if last_chunk.key_tensor.shape[0] != fill_key.shape[0]:
-                        #         logger.error(f"❌ BATCH MISMATCH: {last_chunk.key_tensor.shape[0]} != {fill_key.shape[0]}")
-                        #         logger.error(f"   This is SCENARIO 3: Cached chunk structure mismatch with new KV")
-
-                        # Concatenate with existing last chunk KV (concatenate along correct seq_len dimension)
-                        # Both on GPU - merge on GPU for performance
-                        merged_key = torch.cat(
-                            [last_chunk.key_tensor, fill_key], dim=seq_dim
-                        )  # Concatenate along sequence dimension
-                        merged_value = torch.cat(
-                            [last_chunk.value_tensor, fill_value], dim=seq_dim
-                        )
-
-                        # ✅ Update last chunk with merged KV (keep on GPU for performance)
-                        merged_key_gpu = merged_key.detach()
-                        merged_value_gpu = merged_value.detach()
-
-                        # ✅ VALIDATION: Check merged tensor dimensions BEFORE storing
-                        # if layer_idx == 0:
-                            # logger.debug(f"[MERGE VALIDATION] session_id={session_id}, chunk_id={last_chunk_id}:")
-                            # logger.debug(f"  last_chunk.key_tensor.shape={last_chunk.key_tensor.shape}")
-                            # logger.debug(f"  fill_key.shape={fill_key.shape}")
-                            # logger.debug(f"  merged_key_gpu.shape={merged_key_gpu.shape}")
-
-                        # Check for malformed tensors
-                        if len(merged_key_gpu.shape) != 4:
-                            logger.error(f"❌ Merged key has wrong dimensions! Expected 4D, got {merged_key_gpu.shape}")
-                        if merged_key_gpu.shape[-1] == 0:
-                            logger.error(f"❌ Merged key has head_dim=0! Shape: {merged_key_gpu.shape}")
-                            raise ValueError(f"Merge operation created tensor with head_dim=0: {merged_key_gpu.shape}")
-
-                        # ✅ DEBUG: Log dtype when merging chunks
-                        # if layer_idx == 0:
-                        #     logger.debug(f"_store_new_kv_chunks] Merging chunk: merged_key_gpu={merged_key_gpu.dtype}, merged_value_gpu={merged_value_gpu.dtype}")
-                        #     logger.debug(f"  → last_chunk original: key={last_chunk.key_tensor.dtype}, value={last_chunk.value_tensor.dtype}")
-
-                        updated_chunk = KVChunk(
-                            session_id=session_id,
-                            chunk_id=last_chunk_id,
-                            layer_idx=layer_idx,
-                            key_tensor=merged_key_gpu,
-                            value_tensor=merged_value_gpu,
-                            context_length=last_chunk.context_length,
-                            session_total_chunks=total_chunks,
-                            num_layers=self.num_layers,
-                        )
-
-                        try:
-                            self.cache.store_chunk(updated_chunk, location=CacheLocation.GPU)
-                        except Exception as e:
-                            print(f"Warning: Failed to update last chunk {last_chunk_key}: {e}")
-
-                # ✅ Process remaining new tokens as full chunks
-                # Use correct dimension for tensor format
-                if seq_dim == 2:
-                    # Gemma format: [batch, heads, seq, head_dim]
-                    remaining_key = new_key[:, :, fill_last:, :]  # [batch, heads, remaining_new, head_dim]
-                    remaining_value = new_value[:, :, fill_last:, :]
-                else:
-                    # Standard format: [batch, seq, heads, head_dim]
-                    remaining_key = new_key[:, fill_last:, :, :]  # [batch, remaining_new, heads, head_dim]
-                    remaining_value = new_value[:, fill_last:, :, :]
-
-                # if layer_idx == 0:
-                #     logger.debug(f"[DEBUG CHUNKS] session_id={session_id}: new_key.shape={new_key.shape}, fill_last={fill_last}")
-                #     logger.debug(f"[DEBUG CHUNKS] remaining_key.shape={remaining_key.shape}, remaining_new={remaining_new}")
-                #     logger.debug(f"[DEBUG CHUNKS] Will create {(remaining_new + chunk_size - 1) // chunk_size} chunks")
-                #     if remaining_new == 0:
-                #         logger.warning(f"⚠️ WARNING: remaining_new=0! No more chunks to create. fill_last={fill_last}, tokens_stored={self._get_seq_len_from_kv(new_key)}")
-                #     if remaining_new > 0:
-                #         logger.debug(f"[DEBUG CHUNKS] Slice details: seq_dim={seq_dim}, slicing new_key[:, :, {fill_last}:, :] or new_key[:, {fill_last}:, :, :]")
-
-                for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
-                    # Calculate token range for this chunk
-                    chunk_start = chunk_idx * chunk_size
-                    chunk_end = min(chunk_start + chunk_size, remaining_new)
-
-                    if layer_idx == 0 and not existing_positions:
-                        logger.debug(f"[DEBUG CHUNKS] chunk_idx={chunk_idx}: chunk_start={chunk_start}, chunk_end={chunk_end}, extracted_size={chunk_end - chunk_start}")
-
-                    # Extract chunk tokens (from correct seq_len dimension)
-                    if seq_dim == 2:
-                        # Gemma format: seq at dim=2
-                        chunk_key = remaining_key[:, :, chunk_start:chunk_end, :]
-                        chunk_value = remaining_value[:, :, chunk_start:chunk_end, :]
-                    else:
-                        # Standard format: seq at dim=1
-                        chunk_key = remaining_key[:, chunk_start:chunk_end, :, :]
-                        chunk_value = remaining_value[:, chunk_start:chunk_end, :, :]
-
-                    # if layer_idx == 0:
-                    #     logger.debug(f"[DEBUG CHUNK_EXTRACT] chunk_idx={chunk_idx}: extracted shape={chunk_key.shape}, seq_dim={seq_dim}")
-
-                    # Determine chunk_id
-                    chunk_id = next_chunk_id + chunk_idx
-
-                    # ✅ CRITICAL: Correct context_length calculation
-                    # = tokens before this chunk considering the merge
-                    # = actual_context_before (완전한 이전 청크들)
-                    #   + last_chunk_size (채우기 전 chunk 0)
-                    #   + fill_last (chunk 0에 추가된 토큰)
-                    #   + (chunk_idx * chunk_size) (현재 루프의 청크들)
-                    context_length = actual_context_before + last_chunk_size + fill_last + (chunk_idx * chunk_size)
-
-                    # Create chunk for this layer - KEEP DATA ON GPU
-                    chunk_key_gpu = chunk_key.detach()
-                    chunk_value_gpu = chunk_value.detach()
-
-                    # ✅ DEBUG: Log tensor shape when storing chunks
-                    # if layer_idx == 0:
-                    #     logger.debug(f"[DEBUG CHUNK STORE] session_id={session_id}, chunk_id={chunk_id}: shape={chunk_key_gpu.shape}, num_tokens_expected={chunk_end - chunk_start}")
-
-                    # ✅ VALIDATION: Check dimension integrity BEFORE creating chunk
-                    # if len(chunk_key_gpu.shape) != 4:
-                    #     logger.error(f"❌ CRITICAL: chunk_key has wrong number of dimensions! Expected 4D, got {len(chunk_key_gpu.shape)}D with shape {chunk_key_gpu.shape}")
-
-                    # Check for head_dim=0 which causes attention failure
-                    if chunk_key_gpu.shape[-1] == 0:
-                        logger.error(f"❌ CRITICAL: head_dim is 0! Shape: {chunk_key_gpu.shape}")
-                        logger.error(f"   seq_dim={seq_dim}, chunk_start={chunk_start}, chunk_end={chunk_end}")
-                        logger.error(f"   remaining_key.shape={remaining_key.shape}")
-                        raise ValueError(f"Cannot store chunk with head_dim=0: {chunk_key_gpu.shape}")
-
-                    # Verify device
-                    if chunk_key_gpu.device.type != 'cuda':
-                        logger.warning(f"⚠️ Chunk tensor is not on CUDA! Device: {chunk_key_gpu.device}")
-
-                    chunk = KVChunk(
+                    updated_chunk = KVChunk(
                         session_id=session_id,
-                        chunk_id=chunk_id,
-                        layer_idx=layer_idx,
-                        key_tensor=chunk_key_gpu,
-                        value_tensor=chunk_value_gpu,
-                        context_length=context_length,
+                        chunk_id=last_chunk_id,
+                        layer_kv=merged_layer_kv,
+                        context_length=last_chunk.context_length,
                         session_total_chunks=total_chunks,
                         num_layers=self.num_layers,
                     )
 
-                    # ✅ DEBUG: Verify num_tokens calculation
-                    # if layer_idx == 0:
-                        # logger.debug(f"[DEBUG CHUNK STORE] chunk.num_tokens={chunk.num_tokens} (should be {chunk_end - chunk_start})")
-
-                    # ✅ VALIDATION: After chunk creation, verify it was stored correctly
-                    # if chunk.num_tokens != (chunk_end - chunk_start):
-                    #     logger.error(f"❌ CHUNK NUM_TOKENS MISMATCH! Expected {chunk_end - chunk_start}, got {chunk.num_tokens}")
-                    #     logger.error(f"   key_tensor.shape={chunk.key_tensor.shape}, value_tensor.shape={chunk.value_tensor.shape}")
-
-                    # Store in cache
                     try:
-                        self.cache.store_chunk(chunk, location=CacheLocation.GPU)
+                        self.cache.store_chunk(updated_chunk, location=CacheLocation.GPU)
                     except Exception as e:
-                        print(f"Warning: Failed to store chunk {chunk.key}: {e}")
+                        print(f"Warning: Failed to update last chunk {last_chunk_key}: {e}")
+
+            # Step 3: Extract remaining tokens (after fill_last) for all layers
+            remaining_layer_kv = {}
+            for layer_idx, (new_k, new_v) in all_layer_new_kv.items():
+                if seq_dim == 2:
+                    rem_k = new_k[:, :, fill_last:, :]
+                    rem_v = new_v[:, :, fill_last:, :]
+                else:
+                    rem_k = new_k[:, fill_last:, :, :]
+                    rem_v = new_v[:, fill_last:, :, :]
+                remaining_layer_kv[layer_idx] = (rem_k, rem_v)
+
+            # Step 4: Create new per-position chunks from remaining tokens
+            for chunk_idx in range((remaining_new + chunk_size - 1) // chunk_size):
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = min(chunk_start + chunk_size, remaining_new)
+
+                # Bundle all layers for this position
+                chunk_layer_kv = {}
+                for layer_idx, (rem_k, rem_v) in remaining_layer_kv.items():
+                    if seq_dim == 2:
+                        ck = rem_k[:, :, chunk_start:chunk_end, :]
+                        cv = rem_v[:, :, chunk_start:chunk_end, :]
+                    else:
+                        ck = rem_k[:, chunk_start:chunk_end, :, :]
+                        cv = rem_v[:, chunk_start:chunk_end, :, :]
+
+                    if ck.shape[-1] == 0:
+                        raise ValueError(f"Cannot store chunk with head_dim=0: {ck.shape}")
+
+                    chunk_layer_kv[layer_idx] = (ck.detach(), cv.detach())
+
+                chunk_id = next_chunk_id + chunk_idx
+                context_length = actual_context_before + last_chunk_size + fill_last + (chunk_idx * chunk_size)
+
+                chunk = KVChunk(
+                    session_id=session_id,
+                    chunk_id=chunk_id,
+                    layer_kv=chunk_layer_kv,
+                    context_length=context_length,
+                    session_total_chunks=total_chunks,
+                    num_layers=self.num_layers,
+                )
+
+                try:
+                    self.cache.store_chunk(chunk, location=CacheLocation.GPU)
+                except Exception as e:
+                    print(f"Warning: Failed to store chunk {chunk.key}: {e}")
 
             # ✅ CRITICAL: Update SessionMetadata with new token count
             # This is essential for:
