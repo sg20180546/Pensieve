@@ -621,6 +621,7 @@ def run_concurrent_comparison(args):
 
     pensieve_stats = pensieve_server.get_statistics_str()
     print(f"\n{pensieve_stats}")
+    print("pensieve_total_time",pensieve_total_time)
 
     # ✅ Use server's accumulated TTFT measurements (most accurate)
     all_pensieve_ttfts = pensieve_server.all_ttfts
@@ -641,7 +642,6 @@ def run_concurrent_comparison(args):
     pensieve_throughput = (
         total_pensieve_requests / pensieve_total_time if pensieve_total_time > 0 else 0
     )
-    # print("total_pensieve_requests/pensieve_total_time",total_pensieve_requests,pensieve_total_time)
 
     # ============================================================================
     # CLEANUP: Explicit memory cleanup between runs
@@ -714,7 +714,6 @@ def run_concurrent_comparison(args):
         thread.join()
 
     vllm_total_time = time.time() - start_time
-
     # ✅ Stop immediate request processing thread
     vllm_server.batch_collection_running = False
     if vllm_server.batch_collection_thread:
@@ -731,6 +730,7 @@ def run_concurrent_comparison(args):
 
     vllm_stats = vllm_server.get_statistics_str()
     print(f"\n{vllm_stats}")
+    print("vllm_total_time" , vllm_total_time)
 
     # ✅ Use server's accumulated TTFT measurements (most accurate)
     all_vllm_ttfts = vllm_server.all_ttfts
