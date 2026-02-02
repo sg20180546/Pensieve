@@ -267,7 +267,7 @@ class BatchScheduler:
         # print("chunks_needing_space ",chunks_needing_space)
         print("cache_plan.chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
         print("cache_plan.chunks_to_swap_out ",len(cache_plan.chunks_to_swap_out))
-        print(cache_plan.chunks_to_swap_out)
+        # print(cache_plan.chunks_to_swap_out)
         print("cache_plan.chunks_to_recompute ",len(cache_plan.chunks_to_recompute))
         return cache_plan
 

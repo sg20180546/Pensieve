@@ -757,7 +757,7 @@ class Worker:
                         # This ensures proper locking and eviction policy
                         try:
                             freed = self.cache._evict_to_free_space(
-                                needed_size*10,
+                                needed_size*1.01,
                                 CacheLocation.GPU
                             )
                             if freed < needed_size:
