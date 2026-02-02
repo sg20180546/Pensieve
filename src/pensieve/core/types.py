@@ -216,21 +216,28 @@ class KVChunk:
         self.last_accessed = time.time()
 
     def move_to_cpu(self) -> None:
-        """Move all layer tensors to CPU."""
+        """Move all layer tensors to CPU via single batched transfer."""
         if self.location == CacheLocation.GPU and self.layer_kv:
-            self.layer_kv = {
-                idx: (k.cpu(), v.cpu())
-                for idx, (k, v) in self.layer_kv.items()
-            }
+            # Stack all tensors → single transfer → unstack
+            indices = sorted(self.layer_kv.keys())
+            keys_stacked = torch.stack([self.layer_kv[i][0] for i in indices])
+            vals_stacked = torch.stack([self.layer_kv[i][1] for i in indices])
+            keys_cpu = keys_stacked.cpu()
+            vals_cpu = vals_stacked.cpu()
+            for pos, idx in enumerate(indices):
+                self.layer_kv[idx] = (keys_cpu[pos], vals_cpu[pos])
             self.location = CacheLocation.CPU
 
     def move_to_gpu(self, device: str = 'cuda:0') -> None:
-        """Move all layer tensors to GPU."""
+        """Move all layer tensors to GPU via single batched transfer."""
         if self.location == CacheLocation.CPU and self.layer_kv:
-            self.layer_kv = {
-                idx: (k.to(device), v.to(device))
-                for idx, (k, v) in self.layer_kv.items()
-            }
+            indices = sorted(self.layer_kv.keys())
+            keys_stacked = torch.stack([self.layer_kv[i][0] for i in indices])
+            vals_stacked = torch.stack([self.layer_kv[i][1] for i in indices])
+            keys_gpu = keys_stacked.to(device)
+            vals_gpu = vals_stacked.to(device)
+            for pos, idx in enumerate(indices):
+                self.layer_kv[idx] = (keys_gpu[pos], vals_gpu[pos])
             self.location = CacheLocation.GPU
 
     def drop_tensors(self) -> None:
