@@ -25,6 +25,7 @@ Implemented by Sungjin Byeon(sg20180546)
 ```bash
 pip install -r requirements.txt
 ```
+Hugging face login, and approve llama and sharegt agreements.
 
 ### Basic Usage
 
