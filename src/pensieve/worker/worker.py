@@ -1152,6 +1152,9 @@ class Worker:
                     for layer_idx, (new_k, new_v) in all_layer_new_kv.items():
                         if layer_idx in last_chunk.layer_kv:
                             old_k, old_v = last_chunk.layer_kv[layer_idx]
+                            # old_k, old_v = last_chunk.layer_kv[layer_idx]
+                            old_k = old_k.to(self.device)  # GPU로 이동
+                            old_v = old_v.to(self.device)
                             if seq_dim == 2:
                                 fill_k = new_k[:, :, :fill_last, :]
                                 fill_v = new_v[:, :, :fill_last, :]
