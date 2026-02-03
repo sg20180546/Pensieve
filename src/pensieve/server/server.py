@@ -247,7 +247,7 @@ class PensieveServer:
 
         # Get conversation history
         history = self._get_session_history(session_id)
-        print("Penseive history",history)
+        # print("Penseive history",history)
 
         # ✅ CRITICAL FIX: Retrieve chunk_keys from cache for multi-turn reuse
         # On Turn 2+, the cache has chunks from previous turns stored in session_chunks
@@ -393,7 +393,7 @@ class PensieveServer:
 
         # Get conversation history (full recomputation in vLLM mode)
         history = self._get_session_history(session_id)
-        print("vllm history",history)
+        # print("vllm history",history)
 
         # Full input includes all history + new user input
         full_input = history + user_input
