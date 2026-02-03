@@ -29,9 +29,7 @@ def test_basic_pinning():
     chunk = KVChunk(
         session_id='session_1',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=1,
         num_layers=40,
@@ -99,9 +97,7 @@ def test_pinned_eviction_protection():
     new_chunk = KVChunk(
         session_id='s4',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=1,
         num_layers=40,
@@ -223,9 +219,7 @@ def test_pinning_with_batch_execution():
     other_chunk = KVChunk(
         session_id='other_s1',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=1,
         num_layers=40,

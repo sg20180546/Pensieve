@@ -135,27 +135,24 @@ class Batch:
 @dataclass
 class KVChunk:
     """
-    Represents a single layer's KV cache for a 32-token chunk.
+    Represents a position's KV cache for a 32-token chunk (all layers combined).
 
-    Design: Layer-wise chunking enables fine-grained eviction control.
-    - Each chunk covers one layer (layer_idx)
-    - Chunks with same (session_id, chunk_id) but different layer_idx are separate objects
-    - This enables "checkerboard" eviction: evict by layer first, then by position within layer
+    Design: Per-position chunking for simpler management.
+    - Each chunk covers ALL layers at one position (chunk_id)
+    - One KVChunk per position instead of one per (position, layer)
+    - layer_kv dict maps layer_idx → (key_tensor, value_tensor)
 
     Key fields:
     - session_id: Which conversation
     - chunk_id: Position within conversation (0, 1, 2, ...)
-    - layer_idx: Which transformer layer (0 to num_layers-1)
-    - key_tensor, value_tensor: KV cache for this layer (shape: [1, seq_len, num_heads, head_dim])
-    - context_length: Tokens BEFORE this chunk (same for all layers in same chunk_id)
+    - layer_kv: All layers' KV tensors {layer_idx: (key_tensor, value_tensor)}
+    - context_length: Tokens BEFORE this chunk
     - session_total_chunks: Total chunks in this session (for relative position weighting)
-    - num_layers: Total layers in model (for layer cost weighting)
+    - num_layers: Total layers in model
     """
     session_id: str
     chunk_id: int               # Position in session (0, 1, 2, ...)
-    layer_idx: int              # Which layer (0 to num_layers-1)
-    key_tensor: torch.Tensor    # Shape: [1, seq_len, num_heads, head_dim]
-    value_tensor: torch.Tensor  # Shape: [1, seq_len, num_heads, head_dim]
+    layer_kv: Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]]  # {layer_idx: (k, v)}
     context_length: int         # Tokens BEFORE this chunk
     session_total_chunks: int   # Total chunks in this session
     num_layers: int             # Total layers in model
@@ -167,67 +164,86 @@ class KVChunk:
         self._recalculate_size()
 
     def _recalculate_size(self) -> None:
-        """Recalculate memory footprint for this single layer's KV tensors."""
+        """Recalculate memory footprint for all layers' KV tensors."""
         self._size_bytes = 0
-        if self.key_tensor is not None:
-            self._size_bytes += self.key_tensor.element_size() * self.key_tensor.numel()
-        if self.value_tensor is not None:
-            self._size_bytes += self.value_tensor.element_size() * self.value_tensor.numel()
+        if self.layer_kv is not None:
+            for k, v in self.layer_kv.values():
+                if k is not None:
+                    self._size_bytes += k.element_size() * k.numel()
+                if v is not None:
+                    self._size_bytes += v.element_size() * v.numel()
 
     @property
     def size_bytes(self) -> int:
-        """Memory footprint in bytes (single layer only)."""
+        """Memory footprint in bytes (all layers)."""
         return self._size_bytes
 
     @property
     def num_tokens(self) -> int:
         """Number of tokens in this chunk (always 32, except possibly last)."""
-        if self.key_tensor is None:
+        if not self.layer_kv:
             return 0
 
-        # ✅ FIX: Detect tensor format correctly
-        # Different models use different shapes:
-        # - Gemma-2: [batch, heads, seq, head_dim] → seq at dim=2
-        # - Standard HF: [batch, seq, heads, head_dim] → seq at dim=1
+        # Use first available layer's key tensor for shape detection
+        for k, _v in self.layer_kv.values():
+            if k is None:
+                continue
 
-        shape = self.key_tensor.shape
-        if len(shape) < 2:
-            return 0
+            # Detect tensor format correctly
+            # - Gemma-2: [batch, heads, seq, head_dim] → seq at dim=2
+            # - Standard HF: [batch, seq, heads, head_dim] → seq at dim=1
+            shape = k.shape
+            if len(shape) < 2:
+                return 0
 
-        if len(shape) == 4:
-            # 4D tensor: determine which dimension is sequence
-            # Heuristic: if dim[1] is small (num_heads 8-128), then dim=2 is seq
-            if shape[1] < 256:  # shape[1] is likely num_heads
-                seq_len = shape[2]  # Gemma format: [batch, heads, seq, head_dim]
+            if len(shape) == 4:
+                if shape[1] < 256:  # shape[1] is likely num_heads
+                    return shape[2]  # Gemma format
+                else:
+                    return shape[1]  # Standard format
             else:
-                seq_len = shape[1]  # Standard format: [batch, seq, heads, head_dim]
-            return seq_len
-        else:
-            # For other shapes, default to dim[1] (e.g., 2D: [batch, seq] or [seq, heads])
-            return shape[1]
+                return shape[1]
+
+        return 0
 
     @property
     def key(self) -> str:
-        """Unique identifier for this chunk (includes layer)."""
-        return f"{self.session_id}:chunk:{self.chunk_id}:layer:{self.layer_idx}"
+        """Unique identifier for this chunk (per-position)."""
+        return f"{self.session_id}:chunk:{self.chunk_id}"
 
     def update_access_time(self) -> None:
         """Update last accessed time."""
         self.last_accessed = time.time()
 
     def move_to_cpu(self) -> None:
-        """Move tensors to CPU."""
-        if self.location == CacheLocation.GPU:
-            self.key_tensor = self.key_tensor.cpu()
-            self.value_tensor = self.value_tensor.cpu()
+        """Move all layer tensors to CPU via single batched transfer."""
+        if self.location == CacheLocation.GPU and self.layer_kv:
+            # Stack all tensors → single transfer → unstack
+            indices = sorted(self.layer_kv.keys())
+            keys_stacked = torch.stack([self.layer_kv[i][0] for i in indices])
+            vals_stacked = torch.stack([self.layer_kv[i][1] for i in indices])
+            keys_cpu = keys_stacked.cpu()
+            vals_cpu = vals_stacked.cpu()
+            for pos, idx in enumerate(indices):
+                self.layer_kv[idx] = (keys_cpu[pos], vals_cpu[pos])
             self.location = CacheLocation.CPU
 
     def move_to_gpu(self, device: str = 'cuda:0') -> None:
-        """Move tensors to GPU."""
-        if self.location == CacheLocation.CPU:
-            self.key_tensor = self.key_tensor.to(device)
-            self.value_tensor = self.value_tensor.to(device)
+        """Move all layer tensors to GPU via single batched transfer."""
+        if self.location == CacheLocation.CPU and self.layer_kv:
+            indices = sorted(self.layer_kv.keys())
+            keys_stacked = torch.stack([self.layer_kv[i][0] for i in indices])
+            vals_stacked = torch.stack([self.layer_kv[i][1] for i in indices])
+            keys_gpu = keys_stacked.to(device)
+            vals_gpu = vals_stacked.to(device)
+            for pos, idx in enumerate(indices):
+                self.layer_kv[idx] = (keys_gpu[pos], vals_gpu[pos])
             self.location = CacheLocation.GPU
+
+    def drop_tensors(self) -> None:
+        """Release all tensor memory (keep metadata only for DROPPED state)."""
+        self.layer_kv = None
+        self._size_bytes = 0
 
 
 @dataclass
@@ -236,7 +252,7 @@ class CachePlan:
     batch_id: str
     chunks_to_swap_in: List[str] = field(default_factory=list)  # CPU -> GPU
     chunks_to_swap_out: List[str] = field(default_factory=list)  # GPU -> CPU
-    chunks_to_recompute: Dict[str, torch.Tensor] = field(default_factory=dict)  # Dropped
+    chunks_to_recompute: Dict[str, List[str]] = field(default_factory=dict)  # {session_id: [dropped_chunk_keys]}
 
     @property
     def total_operations(self) -> int:
@@ -254,7 +270,7 @@ class BatchResult:
     ttft_per_request: Dict[str, float] = field(default_factory=dict)  # {request_id: ttft in seconds}
     prefill_time: float = 0.0  # Time for prefill (cache plan + first forward pass)
     generation_time: float = 0.0  # Time for token generation (decode loop)
-
+# tokens_generated generated_tokens
 
 @dataclass
 class CacheStatistics:

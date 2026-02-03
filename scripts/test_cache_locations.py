@@ -61,7 +61,7 @@ def test_gpu_cache_storage():
         print(f"✓ Found chunk in GPU: {chunk_key}")
         print(f"  - Session: {chunk.session_id}")
         print(f"  - Chunk ID: {chunk.chunk_id}")
-        print(f"  - Layer: {chunk.layer_idx}")
+        print(f"  - Layers: {len(chunk.layer_kv) if chunk.layer_kv else 0}")
         print(f"  - Location: {chunk.location}")
 
     assert len(cache.gpu_cache) > 0, "❌ No chunks in GPU cache!"
@@ -258,13 +258,11 @@ def test_chunk_location_retrieval():
             location=CacheLocation.GPU
         )
 
-        # Check where chunk ended up
-        for layer_idx in range(32):
-            chunk_key = f"{session_id}:chunk:0:layer:{layer_idx}"
-            chunk = cache.get_chunk(chunk_key)
-            if chunk:
-                location = chunk.location
-                locations[chunk_key] = location
+        # Check where chunk ended up (per-position, no layer loop)
+        chunk_key = f"{session_id}:chunk:0"
+        chunk = cache.get_chunk(chunk_key)
+        if chunk:
+            locations[chunk_key] = chunk.location
 
     # Count chunks by location
     gpu_count = sum(1 for loc in locations.values() if loc == CacheLocation.GPU)

@@ -91,66 +91,36 @@ class PipelinedTransferManager:
                 "session_0", 0  # Simplified: just get first position
             )
 
-        # Synchronous prefetch of layer 0 chunks
-        # This ensures layer 0 data is ready before we start compute
-        self._prefetch_layer_chunks(0, cache, cache_plan)
+        # Prefetch all position chunks before compute
+        self._prefetch_chunks(cache, cache_plan)
 
-        # Main loop: Pipelined transfer + compute
+        # Main loop: compute layers sequentially (chunks already transferred)
         hidden_states = hidden_states.to(self.device)
 
-        for layer_idx in range(num_layers):
-            # Step 1: Async prefetch NEXT layer on transfer_stream
-            if layer_idx + 1 < num_layers:
-                with torch.cuda.stream(self.transfer_stream):
-                    self._prefetch_layer_chunks(
-                        layer_idx + 1, cache, cache_plan
-                    )
-                    # Record event when transfer done
-                    event = self.transfer_stream.record_event()
-                    while len(self.layer_events) <= layer_idx:
-                        self.layer_events.append(None)
-                    self.layer_events[layer_idx] = event
-
-            # Step 2: Compute CURRENT layer on compute_stream
-            with torch.cuda.stream(self.compute_stream):
-                # Wait for this layer's chunks to be transferred
-                if layer_idx > 0:
-                    self.compute_stream.wait_event(self.layer_events[layer_idx - 1])
-
-                # Get KV cache for this layer
-                layer_module = model.model.layers[layer_idx]
-
-                # Run forward pass
-                # Note: This is simplified; real implementation would extract from model
-                # For now, just pass through (actual KV handling in Worker)
-                # hidden_states = layer_module(hidden_states)
+        # Note: With per-position chunks, layer-wise pipelining doesn't apply.
+        # All layers' KV are in a single chunk and transferred together.
+        # Actual KV handling done in Worker via PensieveCache.__getitem__.
 
         return hidden_states
 
-    def _prefetch_layer_chunks(
+    def _prefetch_chunks(
         self,
-        layer_idx: int,
         cache: TwoTierCache,
         cache_plan: CachePlan,
     ) -> None:
-        """Prefetch all chunks for a layer from CPU to GPU.
+        """Prefetch all position chunks from CPU to GPU.
+
+        With per-position chunks, transfers entire chunks atomically.
 
         Args:
-            layer_idx: Layer index to prefetch
             cache: TwoTierCache instance
             cache_plan: Cache operations plan
         """
         for chunk_key in cache_plan.chunks_to_swap_in:
-            # Check if this chunk belongs to this layer
-            parts = chunk_key.split(":")
-            if len(parts) >= 5:
-                chunk_layer_idx = int(parts[4])
-                if chunk_layer_idx == layer_idx:
-                    # Transfer this chunk asynchronously
-                    try:
-                        self.swap_chunk_to_gpu_async(cache, chunk_key)
-                    except Exception as e:
-                        print(f"Warning: Failed to prefetch {chunk_key}: {e}")
+            try:
+                self.swap_chunk_to_gpu_async(cache, chunk_key)
+            except Exception as e:
+                print(f"Warning: Failed to prefetch {chunk_key}: {e}")
 
     def swap_chunk_to_gpu_async(
         self,
@@ -175,13 +145,15 @@ class PipelinedTransferManager:
 
         # PHASE 2: Transfer to GPU (no lock, CUDA stream handles synchronization)
         with torch.cuda.stream(self.transfer_stream):
-            # Move tensors to GPU non-blocking
-            chunk.key_tensor = chunk.key_tensor.to(
-                self.device, non_blocking=True
-            )
-            chunk.value_tensor = chunk.value_tensor.to(
-                self.device, non_blocking=True
-            )
+            # Move all layer tensors to GPU non-blocking
+            if chunk.layer_kv:
+                new_layer_kv = {}
+                for idx, (k, v) in chunk.layer_kv.items():
+                    new_layer_kv[idx] = (
+                        k.to(self.device, non_blocking=True),
+                        v.to(self.device, non_blocking=True),
+                    )
+                chunk.layer_kv = new_layer_kv
             # Record event for synchronization
             event = self.transfer_stream.record_event()
 
@@ -312,12 +284,14 @@ class AsyncTransferTask:
         with torch.cuda.stream(self.stream):
             if self.chunk_key in self.cache.cpu_cache:
                 chunk = self.cache.cpu_cache[self.chunk_key]
-                chunk.key_tensor = chunk.key_tensor.to(
-                    "cuda:0", non_blocking=True
-                )
-                chunk.value_tensor = chunk.value_tensor.to(
-                    "cuda:0", non_blocking=True
-                )
+                if chunk.layer_kv:
+                    new_layer_kv = {}
+                    for idx, (k, v) in chunk.layer_kv.items():
+                        new_layer_kv[idx] = (
+                            k.to("cuda:0", non_blocking=True),
+                            v.to("cuda:0", non_blocking=True),
+                        )
+                    chunk.layer_kv = new_layer_kv
                 self.event = self.stream.record_event()
                 self.completed = True
 

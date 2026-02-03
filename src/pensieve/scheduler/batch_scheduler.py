@@ -157,41 +157,20 @@ class BatchScheduler:
             # Get all available positions (chunks) for this session
             positions = self.cache.get_session_positions(session_id)
 
-            # Check each position and EACH LAYER's chunk status
+            # Check each position's chunk status (per-position chunks contain all layers)
             for pos in positions:
-                # ✅ Check all layers (each layer can have different availability)
-                for layer_idx in range(self.cache.num_layers):
-                    chunk_key = f"{session_id}:chunk:{pos}:layer:{layer_idx}"
-                    chunk = self.cache.get_chunk(chunk_key)
+                chunk_key = f"{session_id}:chunk:{pos}"
+                chunk = self.cache.get_chunk(chunk_key)
 
-                    if chunk is None:
-                        # Not found anywhere
-                        continue
+                if chunk is None:
+                    continue
 
-                    # ✅ Explicitly determine chunk location from chunk.location
-                    # (get_chunk now returns DROPPED chunks too)
-                    if chunk.location == CacheLocation.GPU:
-                        chunks_needed[chunk_key] = "GPU"
-                    elif chunk.location == CacheLocation.CPU:
-                        chunks_needed[chunk_key] = "CPU"
-                    elif chunk.location == CacheLocation.DROPPED:
-                        chunks_needed[chunk_key] = "DROPPED"
-
-        # 2. Plan swaps based on memory pressure
-        stats = self.cache.get_statistics()
-        gpu_free_ratio = stats.gpu_free_ratio
-
-        # If GPU is filling up, plan to move CPU chunks to GPU first
-        # (Otherwise, chunks from CPU might stay there during execution)
-        chunks_in_cpu = [
-            key for key, loc in chunks_needed.items() if loc == "CPU"
-        ]
-
-        # Priority: Swap in chunks that will be used in this batch
-        # For now, swap in all CPU chunks that are needed
-        # ✅ OPTIMIZATION: Accumulate all eviction needs, then decide once
-        total_evict_amount = 0
-        chunks_needing_space = []  # List of (chunk_key, chunk, needed_size)
+                if chunk.location == CacheLocation.GPU:
+                    chunks_needed[chunk_key] = "GPU"
+                elif chunk.location == CacheLocation.CPU:
+                    chunks_needed[chunk_key] = "CPU"
+                elif chunk.location == CacheLocation.DROPPED:
+                    chunks_needed[chunk_key] = "DROPPED"
 
         # PHASE 1: Snapshot cache state (quick, under lock)
         with self.cache.cache_lock:
@@ -201,77 +180,102 @@ class BatchScheduler:
             gpu_used_bytes = self.cache.gpu_used_bytes
             gpu_capacity_bytes = self.cache.gpu_capacity_bytes
 
-        # PHASE 2: Analyze and plan (no lock, heavy computation)
-        # First pass: identify all chunks that need GPU space
-        # Track accumulated space to handle multiple chunks in sequence
+        # PHASE 2: Identify dropped chunks FIRST (need their size for eviction planning)
+        dropped_chunks = {
+            key: chunk
+            for key, chunk in dropped_chunks_snapshot.items()
+            if key in chunks_needed
+        }
+        for chunk_key, chunk in dropped_chunks.items():
+            parts = chunk_key.split(":")
+            if len(parts) >= 2:
+                session_id = parts[0]
+                if session_id not in cache_plan.chunks_to_recompute:
+                    cache_plan.chunks_to_recompute[session_id] = []
+                cache_plan.chunks_to_recompute[session_id].append(chunk_key)
+
+        # Estimate recovery size: dropped chunks have size_bytes=0,
+        # so use average size of existing GPU/CPU chunks from same session
+        recovery_estimated_bytes = 0
+        if cache_plan.chunks_to_recompute:
+            # Build session → avg chunk size map from live chunks
+            session_avg_size: Dict[str, int] = {}
+            all_live_chunks = list(gpu_cache_snapshot.values()) + list(cpu_cache_snapshot.values())
+            session_sizes: Dict[str, List[int]] = {}
+            for c in all_live_chunks:
+                if c.size_bytes > 0:
+                    if c.session_id not in session_sizes:
+                        session_sizes[c.session_id] = []
+                    session_sizes[c.session_id].append(c.size_bytes)
+            for sid, sizes in session_sizes.items():
+                session_avg_size[sid] = sum(sizes) // len(sizes) if sizes else 0
+
+            # Global fallback if session has no live chunks
+            all_sizes = [s for sizes in session_sizes.values() for s in sizes]
+            global_avg = sum(all_sizes) // len(all_sizes) if all_sizes else 0
+
+            for session_id, chunk_keys in cache_plan.chunks_to_recompute.items():
+                avg = session_avg_size.get(session_id, global_avg)
+                recovery_estimated_bytes += avg * len(chunk_keys)
+
+        # PHASE 3: Plan swap-in (CPU→GPU) + account for recovery space
+        chunks_in_cpu = [
+            key for key, loc in chunks_needed.items() if loc == "CPU"
+        ]
+
+        total_evict_amount = 0
+        chunks_needing_space = []
+
         accumulated_gpu_used = gpu_used_bytes
         for chunk_key in chunks_in_cpu:
             chunk = cpu_cache_snapshot.get(chunk_key)
             if chunk:
-                # Check if chunk size fits in GPU with accumulated usage
                 if (
                     accumulated_gpu_used + chunk.size_bytes
                     <= gpu_capacity_bytes
                 ):
-                    # GPU has space, can swap in immediately
                     chunks_to_swap_in.append(chunk_key)
-                    accumulated_gpu_used += chunk.size_bytes  # Update accumulated space
+                    accumulated_gpu_used += chunk.size_bytes
                 else:
-                    # GPU is full, this chunk needs space to be freed
                     evict_amount = (
                         accumulated_gpu_used + chunk.size_bytes
                         - gpu_capacity_bytes
                     )
                     chunks_needing_space.append((chunk_key, chunk, evict_amount))
                     total_evict_amount += evict_amount
+                    accumulated_gpu_used += chunk.size_bytes
 
-        # Second pass: if any chunks need space, evict ONCE based on total need
-        if chunks_needing_space and total_evict_amount > 0:
-            # ✅ Evict only once based on cumulative need, not per-chunk
+        # Include recovery size in eviction budget
+        remaining_after_swaps = gpu_capacity_bytes - accumulated_gpu_used
+        if recovery_estimated_bytes > remaining_after_swaps:
+            total_evict_amount += recovery_estimated_bytes - max(remaining_after_swaps, 0)
+
+        # Evict once based on total need (swap-in + recovery)
+        if total_evict_amount > 0:
             evicted = self.cache.eviction_policy.select_chunks_to_evict(
-                list(gpu_cache_snapshot.values()), total_evict_amount*1.01, cache=self.cache
+                list(gpu_cache_snapshot.values()), total_evict_amount * 1.01, cache=self.cache
             )
             chunks_to_swap_out.extend(evicted)
 
-            # Now add all chunks that need space to swap_in
-            for chunk_key, chunk, _ in chunks_needing_space:
-                chunks_to_swap_in.append(chunk_key)
+        # Add all chunks that needed space to swap_in
+        for chunk_key, chunk, _ in chunks_needing_space:
+            chunks_to_swap_in.append(chunk_key)
 
-        # 3. Build cache plan
+        # PHASE 4: Build cache plan
         cache_plan.chunks_to_swap_in = chunks_to_swap_in
         cache_plan.chunks_to_swap_out = chunks_to_swap_out
-        # print("cache_plan.chunks_to_swap_in",cache_plan.chunks_to_swap_in)
-        # print("cache_plan.chunks_to_swap_out",cache_plan.chunks_to_swap_out)
-        # 4. Identify dropped chunks needing recovery
-        dropped_chunks = {
-            key: chunk
-            for key, chunk in dropped_chunks_snapshot.items()
-            if key in chunks_needed
-        }
-        # Store dropped chunk info for worker to handle recovery
-        for chunk_key, chunk in dropped_chunks.items():
-            # Extract session_id from chunk_key
-            # Format: "session:chunk:id:layer:idx"
-            parts = chunk_key.split(":")
-            if len(parts) >= 2:
-                session_id = parts[0]
-                # Add to recovery dict for this session
-                if session_id not in cache_plan.chunks_to_recompute:
-                    cache_plan.chunks_to_recompute[session_id] = []
-                cache_plan.chunks_to_recompute[session_id].append(chunk_key)
-        # print(chunks_needed)
-        # Use snapshotted values to avoid race condition
+
         print("gpu_used_bytes ", gpu_used_bytes)
         with self.cache.cache_lock:
             cpu_used_bytes = self.cache.cpu_used_bytes
         print("cpu_used_bytes ", cpu_used_bytes)
-        print("chunks_already_in",len(chunks_needed)-len(cache_plan.chunks_to_swap_in)-len(cache_plan.chunks_to_recompute))
-        # print("chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
-        # print("cache_plan.chunks_to_swap_in")
-        # print("cache_plan.chunks_to_swap_out")
-        print("cache_plan.chunks_to_swap_in ",len(cache_plan.chunks_to_swap_in))
-        print("chunks_to_swap_out ",len(cache_plan.chunks_to_swap_out))
-        print("chunks_to_recompute ",len(cache_plan.chunks_to_recompute))
+        print("chunks_already_in", len(chunks_needed) - len(cache_plan.chunks_to_swap_in) - sum(len(v) for v in cache_plan.chunks_to_recompute.values()))
+        print("cache_plan.chunks_to_swap_in ", len(cache_plan.chunks_to_swap_in))
+        print("cache_plan.chunks_to_swap_out ", len(cache_plan.chunks_to_swap_out))
+        print("cache_plan.chunks_to_recompute ", sum(len(v) for v in cache_plan.chunks_to_recompute.values()))
+        if recovery_estimated_bytes > 0:
+            print(f"recovery_estimated_bytes {recovery_estimated_bytes / 1024**2:.1f} MB")
+        print(cache_plan.chunks_to_recompute)
         return cache_plan
 
     def update_running_requests(

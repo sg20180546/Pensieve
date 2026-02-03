@@ -573,9 +573,16 @@ def run_concurrent_comparison(args):
     pensieve_server._get_worker()  # Initialize worker for Pensieve mode
     print("✓ Pensieve model pre-loaded successfully")
 
+    # Print Korean time before starting benchmark
+    from datetime import datetime
+    import pytz
+    kst = pytz.timezone('Asia/Seoul')
+    current_time_kst = datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S %Z')
+    print(f"🕐 Starting Pensieve benchmark at: {current_time_kst}")
+
     # ✅ Start batch collection thread for unified scheduling
     # pensieve_server.start_batch_collection_thread()
-    print(f"✓ Unified batch scheduler started (batch_timeout={pensieve_server.batch_timeout:.3f}s, max_batch_size={pensieve_server.max_batch_size})")
+    # print(f"✓ Unified batch scheduler started (batch_timeout={pensieve_server.batch_timeout:.3f}s, max_batch_size={pensieve_server.max_batch_size})")
 
     # Launch concurrent client threads (using async submission)
     pensieve_results_queue = Queue()
@@ -621,6 +628,7 @@ def run_concurrent_comparison(args):
 
     pensieve_stats = pensieve_server.get_statistics_str()
     print(f"\n{pensieve_stats}")
+    print("pensieve_total_time",pensieve_total_time)
 
     # ✅ Use server's accumulated TTFT measurements (most accurate)
     all_pensieve_ttfts = pensieve_server.all_ttfts
@@ -641,7 +649,6 @@ def run_concurrent_comparison(args):
     pensieve_throughput = (
         total_pensieve_requests / pensieve_total_time if pensieve_total_time > 0 else 0
     )
-    # print("total_pensieve_requests/pensieve_total_time",total_pensieve_requests,pensieve_total_time)
 
     # ============================================================================
     # CLEANUP: Explicit memory cleanup between runs
@@ -681,6 +688,10 @@ def run_concurrent_comparison(args):
     _ = vllm_server.tokenizer  # Trigger tokenizer loading
     print("✓ vLLM model pre-loaded successfully")
 
+    # Print Korean time before starting benchmark
+    current_time_kst = datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S %Z')
+    print(f"🕐 Starting vLLM benchmark at: {current_time_kst}")
+
     # ✅ Start immediate request processing thread (no batching)
     vllm_server.start_immediate_request_processing_thread()
     print(f"✓ Immediate request processing started (no unified batching)")
@@ -714,7 +725,6 @@ def run_concurrent_comparison(args):
         thread.join()
 
     vllm_total_time = time.time() - start_time
-
     # ✅ Stop immediate request processing thread
     vllm_server.batch_collection_running = False
     if vllm_server.batch_collection_thread:
@@ -731,6 +741,7 @@ def run_concurrent_comparison(args):
 
     vllm_stats = vllm_server.get_statistics_str()
     print(f"\n{vllm_stats}")
+    print("vllm_total_time" , vllm_total_time)
 
     # ✅ Use server's accumulated TTFT measurements (most accurate)
     all_vllm_ttfts = vllm_server.all_ttfts

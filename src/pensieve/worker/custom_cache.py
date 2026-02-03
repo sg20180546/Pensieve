@@ -6,21 +6,21 @@ from typing import Dict, List, Optional, Tuple
 from transformers import DynamicCache
 
 class PensieveCache(DynamicCache):
-    """Custom KV cache implementing HuggingFace Cache interface (layer-wise chunking).
+    """Custom KV cache implementing HuggingFace Cache interface (per-position chunking).
 
     This class enables HuggingFace models to use our two-tier KV cache
     by implementing the standard Cache interface (__getitem__, __len__).
 
-    Design: Each KVChunk represents a single layer (layer-wise chunking).
-    When gathering KV for a layer, we search for all chunks at all positions
-    with matching (session_id, layer_idx) and concatenate them.
+    Design: Each KVChunk contains ALL layers' KV at one position.
+    When gathering KV for a layer, we find all position chunks and
+    extract the requested layer's tensors from each.
 
     When a HuggingFace model does:
         layer_past = past_key_values[layer_idx]
 
     This calls our __getitem__(layer_idx) which:
-    1. Finds all chunks for this layer across all positions in batch
-    2. Gathers K and V tensors from each chunk
+    1. Finds all per-position chunks for sessions in batch
+    2. Extracts layer_idx's K and V from each position chunk
     3. Concatenates them to form layer's full KV cache
     4. Returns to model for attention computation
     """
@@ -48,8 +48,7 @@ class PensieveCache(DynamicCache):
     def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get KV cache for a specific layer.
 
-        Since chunks are now layer-indexed, we gather all chunks at all positions
-        for this specific layer, ensuring they're ordered correctly.
+        Extracts layer_idx's KV from per-position chunks and concatenates.
 
         Called by HuggingFace models when they need KV cache during forward pass.
         Example: k, v = past_key_values[layer_idx]
@@ -67,7 +66,6 @@ class PensieveCache(DynamicCache):
             return self._layer_kv_cache[layer_idx]
 
         # Gather KV from all requests in batch for this specific layer
-        # Chunks are ordered by (session_id, chunk_id, layer_idx)
         all_keys = []
         all_values = []
 
@@ -75,59 +73,46 @@ class PensieveCache(DynamicCache):
             session_id = request_info.get('session_id')
             positions = request_info.get('positions', [])  # chunk_ids
 
-            # Snapshot caches to avoid iteration race conditions (quick, under lock)
-            with self.cache_manager.cache_lock:
-                gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
-                cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
-
-            # Gather chunks for this layer at all positions in order
+            # Direct O(1) lookup per position chunk
             for position in sorted(positions):
-                # Search for chunk at (session_id, position, layer_idx)
-                chunk_found = False
-                for cache_dict in [gpu_cache_snapshot, cpu_cache_snapshot]:
-                    for chunk in cache_dict.values():
-                        if (chunk.session_id == session_id and
-                            chunk.chunk_id == position and
-                            chunk.layer_idx == layer_idx):
-                            chunk_found = True
-                            chunk.update_access_time()
-                            # ✅ Only add non-empty chunks
-                            if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
-                                all_keys.append(chunk.key_tensor)
-                                all_values.append(chunk.value_tensor)
-                            break
-                    if chunk_found:
+                chunk_key = f"{session_id}:chunk:{position}"
+                # Check GPU then CPU cache
+                chunk = None
+                for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
+                    if chunk_key in cache_dict:
+                        chunk = cache_dict[chunk_key]
                         break
 
+                if chunk and chunk.layer_kv and layer_idx in chunk.layer_kv:
+                    chunk.update_access_time()
+                    k, v = chunk.layer_kv[layer_idx]
+                    if k is not None and k.numel() > 0:
+                        all_keys.append(k)
+                        all_values.append(v)
+
         # Fallback: If no chunks found via batch_info.positions, scan cache directly
-        # This handles cases where chunk_keys wasn't populated in Request object
         if not all_keys:
-            # Get all session_ids from batch_info
             session_ids = {info.get('session_id') for info in self.batch_info.values()}
 
-            # Snapshot caches (quick, under lock)
-            with self.cache_manager.cache_lock:
-                gpu_cache_snapshot = dict(self.cache_manager.gpu_cache)
-                cpu_cache_snapshot = dict(self.cache_manager.cpu_cache)
-
-            # Collect all chunks for these sessions and this layer, sorted by chunk_id
+            # Collect all position chunks for these sessions, sorted by chunk_id
             found_chunks = {}  # {(session_id, chunk_id): chunk}
-            for cache_dict in [gpu_cache_snapshot, cpu_cache_snapshot]:
+            for cache_dict in [self.cache_manager.gpu_cache, self.cache_manager.cpu_cache]:
                 for chunk in cache_dict.values():
-                    if chunk.session_id in session_ids and chunk.layer_idx == layer_idx:
+                    if chunk.session_id in session_ids:
                         key = (chunk.session_id, chunk.chunk_id)
                         found_chunks[key] = chunk
 
-            # Add chunks in order of chunk_id (grouped by session_id)
+            # Extract layer_idx from each position chunk in order
             for session_id in sorted(session_ids):
                 session_chunks = [chunk for (sid, _), chunk in found_chunks.items() if sid == session_id]
                 session_chunks.sort(key=lambda c: c.chunk_id)
                 for chunk in session_chunks:
-                    chunk.update_access_time()
-                    # ✅ Only add non-empty chunks
-                    if chunk.key_tensor is not None and chunk.key_tensor.numel() > 0:
-                        all_keys.append(chunk.key_tensor)
-                        all_values.append(chunk.value_tensor)
+                    if chunk.layer_kv and layer_idx in chunk.layer_kv:
+                        chunk.update_access_time()
+                        k, v = chunk.layer_kv[layer_idx]
+                        if k is not None and k.numel() > 0:
+                            all_keys.append(k)
+                            all_values.append(v)
 
         # Concatenate all KV tensors for this layer
         # They may be non-contiguous in GPU memory (that's the whole point!)
@@ -345,15 +330,15 @@ class PensieveCache(DynamicCache):
             if positions:
                 max_chunk_id = max(positions)
                 session_id = request_info.get('session_id')
-                # Find actual size of last chunk
+                # Direct O(1) lookup for last position chunk
+                chunk_key = f"{session_id}:chunk:{max_chunk_id}"
                 for cache_dict in cache_dicts:
-                    for chunk in cache_dict.values():
-                        if (chunk.session_id == session_id and
-                            chunk.chunk_id == max_chunk_id):
-                            last_chunk_tokens = chunk.num_tokens
-                            total_tokens = (max_chunk_id * CHUNK_SIZE) + last_chunk_tokens
-                            max_tokens = max(max_tokens, total_tokens)
-                            break
+                    if chunk_key in cache_dict:
+                        chunk = cache_dict[chunk_key]
+                        last_chunk_tokens = chunk.num_tokens
+                        total_tokens = (max_chunk_id * CHUNK_SIZE) + last_chunk_tokens
+                        max_tokens = max(max_tokens, total_tokens)
+                        break
 
         # Method 2 fallback: If batch_info is incomplete, scan cache_manager directly
         # This handles the case where chunk_keys wasn't properly populated in Request
@@ -389,7 +374,7 @@ class PensieveCacheFactory:
     ) -> PensieveCache:
         """Create a PensieveCache for a batch.
 
-        With layer-wise chunking, each KVChunk covers one layer.
+        Each KVChunk covers one position (all layers).
         This factory extracts session and position info from requests.
 
         Args:
@@ -404,7 +389,7 @@ class PensieveCacheFactory:
         batch_info = {}
         for req in batch_requests:
             # Extract unique positions (chunk_ids) from chunk_keys
-            # Format: "session:chunk:id:layer:idx"
+            # Format: "session:chunk:id"
             positions = set()
 
             for chunk_key in req.chunk_keys:

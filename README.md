@@ -30,16 +30,11 @@ pip install -r requirements.txt
 
 ```bash
 # Run with Pensieve (stateful) mode
-python main.py --mode pensieve --model gpt2
+python main.py --dataset sharegt   --num-concurrent-users 3 --model  meta-llama/Meta-Llama-3-8B-Instruct --gpu-cache 20 --cpu-cache 128 --min-turns 6 --max-turns 8  --max-new-tokens 1024 --request-interval 2
 
-# Run with vLLM baseline (stateless) mode
-python main.py --mode vllm --model gpt2
-
-# Compare Pensieve vs vLLM
-python main.py --mode compare --model gpt2
 
 # Interactive multi-turn conversation
-python main.py --mode pensieve --interactive
+python main.py --mode pensieve --model  meta-llama/Meta-Llama-3-8B-Instruct --interactive
 ```
 
 ### Command-Line Options
@@ -54,23 +49,6 @@ python main.py --mode pensieve --interactive
 --max-new-tokens N               Max new tokens per turn (default: 32)
 ```
 
-## Project Structure
-
-```
-pensieve/
-├── src/pensieve/
-│   ├── core/                    # Core data structures
-│   │   ├── cache.py             # TwoTierCache implementation
-│   │   ├── eviction.py          # RetentionValuePolicy
-│   │   └── types.py             # Request, Batch, KVChunk, etc.
-│   ├── worker/
-│   │   └── custom_cache.py      # HuggingFace integration
-│   └── server/
-│       └── server.py            # Main server with Pensieve & vLLM modes
-├── main.py                      # Entry point with argument parsing
-├── requirements.txt
-└── README.md
-```
 
 ## Key Components
 
@@ -130,14 +108,15 @@ These simplifications preserve core concepts while reducing implementation compl
 1. **Leading tokens are cheap to recompute** (attention cost is O(context_length))
 2. **Two-tier caching** effectively uses GPU speed + CPU capacity
 3. **Token-level eviction** (vs conversation-level) enables fine-grained control
-4. **Unified batching** (prefill + generation) improves GPU utilization
+4. **Unified batching** (prefill + generation). While Cache reducing computation, Let's dispatch other sessions prefill/genereation request together. This project does not include this feature.
+5. **Multi-Token Attention** Fast Attention Kernel module that overcomes single execution attention kernel tfor non-contigiuous QKV on GPU memory. This project does not include this feature.
 
 ## Performance
 
 Expected improvements (from paper, OPT-13B):
 
 - **Throughput**: 1.36× vs vLLM
-- **Prefill speedup**: 1.0× (turn 1) → 2.0× (turn 5) → 3.5× (turn 10)
+- **Prefill speedup**: 1.0× (turn 1) → 1.2× (turn 5) → 1.5× (turn 10)
 - **Cache hit rate**: 70% GPU, 20% CPU, 10% miss
 
 ## Architecture
@@ -201,48 +180,6 @@ GPU Hit Rate: 70.0%
 CPU Hit Rate: 20.0%
 Miss Rate: 10.0%
 ```
-
-## Testing
-
-```python
-# Test basic inference
-python scripts/test_basic_inference.py
-
-# Compare modes
-python main.py --mode compare --num-conversations 5
-
-# Interactive mode
-python main.py --interactive
-```
-
-## Implementation Status
-
-### Phase 1: Foundation ✓
-- [x] Project structure
-- [x] Core data structures (KVChunk, Request, Batch)
-- [x] TwoTierCache
-- [x] Basic inference
-
-### Phase 2: Caching ✓
-- [x] GPU cache storage
-- [x] KV chunk management
-- [x] Session tracking
-
-### Phase 3: Eviction & Two-Tier ✓
-- [x] Retention value policy
-- [x] CPU tier support
-- [x] GPU ↔ CPU swapping
-
-### Phase 4: Advanced Features (In Progress)
-- [x] Dropped token recovery
-- [x] Multi-token attention kernel
-- [x] Unified batching (prefill + generation)
-- [ ] Pipelined transfer
-
-### Phase 5: Evaluation (In Progress)
-- [ ] ShareGPT dataset
-- [ ] Performance benchmarking
-- [ ] Throughput vs latency plots
 
 ## References
 

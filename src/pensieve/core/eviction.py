@@ -56,24 +56,18 @@ class RetentionValuePolicy:
         self.cost_profile = cost_profile
 
     def calculate_cost(self, chunk: KVChunk, actual_total_chunks: int = None) -> float:
-        """Calculate recomputation cost for a chunk (layer-wise model).
+        """Calculate recomputation cost for a chunk (per-position model).
 
-        Cost = layer_weight × position_weight × base_cost
+        Cost = position_weight × base_cost
 
         where:
-        - layer_weight: Scales by layer depth (later layers have pipelined lower cost)
-            formula: (num_layers - layer_idx) / num_layers
-            → Layer 0: cost = 1.0 × ...  (highest cost, critical path)
-            → Layer 39: cost = 0.03 × ...  (lowest cost, pipelined)
-
         - position_weight: Session-relative position (leading tokens cheaper to recompute)
             formula: (chunk_id + 1) / actual_total_chunks
             → Chunk 0: 0.01 (cheapest, evict first)
             → Chunk 99: 1.0 (most expensive, evict last)
 
-            ✅ CRITICAL: Uses actual_total_chunks (current session metadata)
-               not chunk.session_total_chunks (stale snapshot from when chunk was created)
-               This ensures consistent position weights across multi-turn conversations!
+            Uses actual_total_chunks (current session metadata)
+            not chunk.session_total_chunks (stale snapshot from when chunk was created)
 
         - base_cost = attention_cost + non_attention_cost
             - attention_cost = alpha * context_length + beta
@@ -92,16 +86,8 @@ class RetentionValuePolicy:
         cost_attention = self.cost_profile.alpha * l + self.cost_profile.beta
         cost_non_attention = self.cost_profile.const_non_attention
 
-        # Layer weight: Earlier layers are more critical (pipelining assumption)
-        # Layer 0 = 1.0 (on critical path)
-        # Layer 39 = 0.025 (fully pipelined, minimal impact)
-        if chunk.num_layers > 0:
-            layer_weight = (chunk.num_layers - chunk.layer_idx) / chunk.num_layers
-        else:
-            layer_weight = 1.0
-
         # Position weight: Session-relative position
-        # ✅ Use actual_total_chunks from SessionMetadata for consistency
+        # Use actual_total_chunks from SessionMetadata for consistency
         # Fallback to chunk.session_total_chunks if not provided (backward compatibility)
         total_chunks = actual_total_chunks if actual_total_chunks is not None else chunk.session_total_chunks
 
@@ -110,9 +96,9 @@ class RetentionValuePolicy:
         else:
             position_weight = 1.0
 
-        # Combined cost with weights
+        # Combined cost with position weight (no layer_weight with per-position chunks)
         base_cost = cost_attention + cost_non_attention
-        weighted_cost = layer_weight * position_weight * base_cost
+        weighted_cost = position_weight * base_cost
 
         return weighted_cost
 
@@ -221,13 +207,15 @@ class RetentionValuePolicy:
         ✅ CRITICAL: Pass cache parameter to ensure consistent position weights
            across multi-turn conversations!
 
+        ✅ CRITICAL: Skips pinned chunks to prevent eviction during batch execution.
+
         Args:
             chunks: List of chunks available to evict
             target_bytes: Target amount of memory to free
-            cache: TwoTierCache instance (optional, for getting SessionMetadata)
+            cache: TwoTierCache instance (optional, for getting SessionMetadata and pinning status)
 
         Returns:
-            List of chunk keys to evict
+            List of chunk keys to evict (excludes pinned chunks)
         """
         ranked = self.rank_chunks_for_eviction(chunks, cache=cache)
 
@@ -238,8 +226,14 @@ class RetentionValuePolicy:
             if freed >= target_bytes:
                 break
 
+            # ✅ CRITICAL: Skip pinned chunks (cannot evict while session is executing)
+            if cache is not None and hasattr(cache, 'is_pinned'):
+                if cache.is_pinned(chunk_key):
+                    continue
+
             # Find the chunk object to get its size
             chunk = next((c for c in chunks if c.key == chunk_key), None)
+
             if chunk:
                 to_evict.append(chunk_key)
                 freed += chunk.size_bytes

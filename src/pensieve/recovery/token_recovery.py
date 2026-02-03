@@ -18,6 +18,7 @@ Design:
 import torch
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
+from transformers import DynamicCache
 
 from pensieve.core.types import (
     Request,
@@ -93,6 +94,19 @@ class TokenRecoveryManager:
             else model.config.n_layer
         )
         self.chunk_size = 32  # tokens per chunk
+        self._seq_dim = None  # Detected lazily from first KV tensor
+
+    def _get_seq_dim(self, kv_tensor: torch.Tensor) -> int:
+        """Get dimension index for seq_len in KV tensor.
+
+        Llama/Gemma: [batch, num_heads, seq_len, head_dim] → dim=2
+        Standard HF: [batch, seq_len, num_heads, head_dim] → dim=1
+        """
+        if kv_tensor is None or len(kv_tensor.shape) < 4:
+            return 1
+        if kv_tensor.shape[1] < 256:  # shape[1] is likely num_heads
+            return 2
+        return 1
 
     def create_recovery_plan(
         self,
@@ -117,17 +131,14 @@ class TokenRecoveryManager:
         # Get all positions in this session
         session_positions = self.cache.get_session_positions(session_id)
 
-        # Check each position for dropped chunks
+        # Check each position for dropped chunks (per-position chunks)
         for pos in session_positions:
-            # Check layer 0 as representative (all layers at position drop together)
-            chunk_key = f"{session_id}:chunk:{pos}:layer:0"
+            chunk_key = f"{session_id}:chunk:{pos}"
             chunk = self.cache.get_chunk(chunk_key)
 
             if chunk is None:
-                # Not found anywhere
                 continue
             elif chunk.location == CacheLocation.DROPPED:
-                # ✅ Explicitly handle DROPPED chunks (returned by get_chunk)
                 dropped_positions.append(pos)
 
         if not dropped_positions:
@@ -226,10 +237,15 @@ class TokenRecoveryManager:
 
             # 🔑 KEY STEP 3: Forward pass (layer dependency handled by model)
             try:
+                # Convert tuple to DynamicCache for HuggingFace models
+                past_kv_cache = None
+                if prev_cached_kv is not None:
+                    past_kv_cache = DynamicCache.from_legacy_cache(prev_cached_kv)
+
                 with torch.no_grad():
                     outputs = self.model(
                         chunk_tokens,
-                        past_key_values=prev_cached_kv,  # ← Full context!
+                        past_key_values=past_kv_cache,  # ← Full context as DynamicCache!
                         use_cache=True,
                         return_dict=True,
                     )
@@ -237,16 +253,22 @@ class TokenRecoveryManager:
                 # 🔑 KEY STEP 4: Store recovered KV for all layers
                 past_kv = outputs.past_key_values
                 if past_kv:
+                    # Convert DynamicCache back to tuple for storage
+                    if isinstance(past_kv, DynamicCache):
+                        past_kv_tuple = past_kv.to_legacy_cache()
+                    else:
+                        past_kv_tuple = past_kv
+
                     # ✅ DEBUG: Log dtype from model output
-                    if past_kv and len(past_kv) > 0:
-                        k, v = past_kv[0]
+                    if past_kv_tuple and len(past_kv_tuple) > 0:
+                        k, v = past_kv_tuple[0]
                         if k is not None:
                             print(f"      [dtype-check] Model output KV: key={k.dtype}, value={v.dtype}")
 
                     self._store_recovered_chunks(
                         session_id=session_id,
                         chunk_id=dropped_chunk_id,
-                        past_key_values=past_kv,
+                        past_key_values=past_kv_tuple,
                         num_prev_tokens=start_token_idx,
                         num_layers=self.num_layers,
                     )
@@ -271,10 +293,10 @@ class TokenRecoveryManager:
         the full context from chunks 0 to N-1 as past_key_values.
 
         Process:
-        1. For each layer (0 to num_layers-1):
-           - Load key, value tensors from all chunks 0..end_chunk_id-1
-           - Concatenate along seq_len dimension
-        2. Return as tuple of (key, value) per layer
+        1. Load per-position chunks in order
+        2. Extract each layer's KV from each position chunk
+        3. Concatenate along seq_len dimension per layer
+        4. Return as tuple of (key, value) per layer
 
         Args:
             session_id: Session ID
@@ -290,23 +312,28 @@ class TokenRecoveryManager:
         # Collect KV for each layer
         collected_keys = [[] for _ in range(self.num_layers)]
         collected_values = [[] for _ in range(self.num_layers)]
-
-        # Load chunks in order (respects token dependency)
+        
+        # Load position chunks in order (respects token dependency)
         for chunk_id in range(start_chunk_id, end_chunk_id):
-            for layer_idx in range(self.num_layers):
-                chunk_key = f"{session_id}:chunk:{chunk_id}:layer:{layer_idx}"
+            chunk_key = f"{session_id}:chunk:{chunk_id}"
 
-                try:
-                    chunk = self.cache.get_chunk(chunk_key)
-                    if chunk is None:
-                        print(f"      ⚠️  Chunk {chunk_key} not found")
+            try:
+                chunk = self.cache.get_chunk(chunk_key)
+                if chunk is None or chunk.layer_kv is None:
+                    print(f"      ⚠️  Chunk {chunk_key} not found or has no tensors")
+                    continue
+
+                # Extract each layer's KV from this position chunk
+                for layer_idx in range(self.num_layers):
+                    if layer_idx not in chunk.layer_kv:
                         continue
 
-                    # Move to device (preserve original dtype)
-                    key_tensor = chunk.key_tensor.to(self.device)
-                    value_tensor = chunk.value_tensor.to(self.device)
+                    k, v = chunk.layer_kv[layer_idx]
 
-                    # ✅ DEBUG: Log dtype consistency
+                    # Move to device (preserve original dtype)
+                    key_tensor = k.to(self.device)
+                    value_tensor = v.to(self.device)
+
                     if chunk_id == 0 and layer_idx == 0:
                         print(f"      [dtype-check] Loaded KV: key={key_tensor.dtype}, value={value_tensor.dtype}")
 
@@ -319,9 +346,18 @@ class TokenRecoveryManager:
                     collected_keys[layer_idx].append(key_tensor)
                     collected_values[layer_idx].append(value_tensor)
 
-                except Exception as e:
-                    print(f"      ❌ Error loading {chunk_key}: {e}")
-                    return None
+            except Exception as e:
+                print(f"      ❌ Error loading {chunk_key}: {e}")
+                return None
+
+        # Detect seq_dim from first collected tensor
+        seq_dim = None
+        for keys_list in collected_keys:
+            if keys_list:
+                seq_dim = self._get_seq_dim(keys_list[0])
+                break
+        if seq_dim is None:
+            seq_dim = 2  # Default for Llama
 
         # Concatenate chunks for each layer (respects token dependency)
         past_key_values = []
@@ -332,20 +368,21 @@ class TokenRecoveryManager:
                 try:
                     concatenated_key = torch.cat(
                         collected_keys[layer_idx],
-                        dim=1,  # Concatenate along seq_len
+                        dim=seq_dim,
                     )
                     concatenated_value = torch.cat(
                         collected_values[layer_idx],
-                        dim=1,
+                        dim=seq_dim,
                     )
 
-                    # ✅ DEBUG: Log dtype after concatenation
                     if layer_idx == 0:
                         print(f"      [dtype-check] Concatenated KV for recovery: key={concatenated_key.dtype}, value={concatenated_value.dtype}")
-
+                    # print(concatenated_key.shape, concatenated_value.shape)
                     past_key_values.append((concatenated_key, concatenated_value))
+                    
                 except Exception as e:
                     print(f"      ❌ Error concatenating layer {layer_idx}: {e}")
+                    # print(past_key_values)
                     return None
 
         return tuple(past_key_values)
@@ -358,7 +395,7 @@ class TokenRecoveryManager:
         num_prev_tokens: int,
         num_layers: int,
     ) -> None:
-        """Store recovered KV chunks for all layers.
+        """Store recovered KV as a single per-position chunk (all layers).
 
         Extracts the NEW chunk's KV from full past_key_values
         (which includes prev chunks + new chunk).
@@ -370,35 +407,41 @@ class TokenRecoveryManager:
             num_prev_tokens: Number of tokens in previous chunks
             num_layers: Number of model layers
         """
-        for layer_idx, (key, value) in enumerate(past_key_values):
-            if key is None or value is None:
-                continue
+        try:
+            # Bundle all layers' KV for this position
+            layer_kv = {}
+            for layer_idx, (key, value) in enumerate(past_key_values):
+                if key is None or value is None:
+                    continue
 
-            try:
                 # Extract ONLY the NEW chunk's tokens
                 # past_key_values has all tokens: [prev ... new]
                 # We want: just the new (last chunk_size tokens)
-                new_key = key[:, -self.chunk_size:, :, :]  # [1, chunk_size, heads, dim]
-                new_value = value[:, -self.chunk_size:, :, :]
+                if self._seq_dim is None:
+                    self._seq_dim = self._get_seq_dim(key)
+                seq_dim = self._seq_dim
 
-                chunk = KVChunk(
-                    session_id=session_id,
-                    chunk_id=chunk_id,
-                    layer_idx=layer_idx,
-                    key_tensor=new_key.detach(),  # Keep on GPU
-                    value_tensor=new_value.detach(),  # Keep on GPU
-                    context_length=num_prev_tokens,  # Tokens before this chunk
-                    session_total_chunks=(num_prev_tokens + 2 * self.chunk_size - 1) // self.chunk_size,
-                    num_layers=num_layers,
-                )
+                if seq_dim == 2:
+                    new_key = key[:, :, -self.chunk_size:, :]
+                    new_value = value[:, :, -self.chunk_size:, :]
+                else:
+                    new_key = key[:, -self.chunk_size:, :, :]
+                    new_value = value[:, -self.chunk_size:, :, :]
+                layer_kv[layer_idx] = (new_key.detach(), new_value.detach())
 
-                self.cache.store_chunk(chunk, location=CacheLocation.GPU)
+            chunk = KVChunk(
+                session_id=session_id,
+                chunk_id=chunk_id,
+                layer_kv=layer_kv,
+                context_length=num_prev_tokens,
+                session_total_chunks=(num_prev_tokens + 2 * self.chunk_size - 1) // self.chunk_size,
+                num_layers=num_layers,
+            )
 
-            except Exception as e:
-                print(
-                    f"      ❌ Failed to store layer {layer_idx} "
-                    f"for chunk {chunk_id}: {e}"
-                )
+            self.cache.store_chunk(chunk, location=CacheLocation.GPU)
+
+        except Exception as e:
+            print(f"      ❌ Failed to store chunk {chunk_id}: {e}")
 
     def merge_for_prefill(
         self,
@@ -541,38 +584,58 @@ class BatchedRecoveryManager:
     def recover_batch(
         self,
         requests: List[Request],
+        chunks_to_recompute: Dict[str, List[str]],
     ) -> Dict[str, Optional[RecoveryPlan]]:
         """Recover dropped tokens for multiple requests.
 
-        CRITICAL: Sessions are independent
-        - Each session's recovery is isolated
-        - No cross-session dependencies or interference
-        - Pinning ensures dropped session chunks are protected during other sessions' recovery
-
-        Algorithm:
-        1. For each request (session):
-           - Create recovery plan (identify dropped chunks)
-           - Recompute ONLY that session's dropped chunks
-           - Other pinned sessions' chunks are protected (cannot be evicted)
-           - Store recovered chunks in shared GPU cache
+        Only recovers chunks that were pre-determined by create_cache_plan.
+        No independent scanning - recovery decisions are made once in the
+        scheduler and executed here exactly as planned.
 
         Args:
             requests: List of requests (from different sessions)
+            chunks_to_recompute: Pre-computed {session_id: [chunk_keys]} from cache_plan.
 
         Returns:
             Dict mapping request_id to recovery plan (or None)
         """
         recovery_plans = {}
+        print(f"recover_batch: {sum(len(v) for v in chunks_to_recompute.values())} chunks to recompute")
 
         for req in requests:
-            plan = self.recovery_manager.create_recovery_plan(req)
-            recovery_plans[req.request_id] = plan
+            session_id = req.session_id
 
-            if plan:
-                # ✅ CRITICAL: Recompute ONLY this session's dropped chunks
-                # Other sessions' chunks are protected by pinning (cannot be evicted)
+            if session_id not in chunks_to_recompute:
+                recovery_plans[req.request_id] = None
+                continue
+
+            dropped_chunk_keys = chunks_to_recompute[session_id]
+            # Extract position IDs from chunk keys ("session:chunk:pos" → pos)
+            dropped_positions = []
+            for ck in dropped_chunk_keys:
+                parts = ck.split(":")
+                if len(parts) >= 3:
+                    dropped_positions.append(int(parts[2]))
+            dropped_positions.sort()
+
+            if not dropped_positions:
+                recovery_plans[req.request_id] = None
+                continue
+
+            raw_tokens = self.recovery_manager._fetch_raw_tokens(
+                session_id, dropped_positions
+            )
+            plan = RecoveryPlan(
+                dropped_positions=dropped_positions,
+                raw_tokens=raw_tokens if raw_tokens is not None else torch.tensor([], dtype=torch.long),
+                session_id=session_id,
+            )
+
+            recovery_plans[req.request_id] = plan
+            print("plan", plan)
+            if plan.raw_tokens is not None and len(plan.raw_tokens) > 0:
                 self.recovery_manager.recompute_dropped_chunks(
-                    session_id=req.session_id,  # ← Pass session ID explicitly
+                    session_id=session_id,
                     recovery_plan=plan,
                 )
 

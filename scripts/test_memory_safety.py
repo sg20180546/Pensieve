@@ -26,9 +26,7 @@ def test_cross_tier_cleanup_recovery():
     chunk_0_v1 = KVChunk(
         session_id='session_1',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=3,
         num_layers=40,
@@ -124,9 +122,7 @@ def test_same_tier_replacement():
     chunk_v1 = KVChunk(
         session_id='session_1',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=1,
         num_layers=40,
@@ -166,7 +162,10 @@ def test_same_tier_replacement():
 
     # Verify it's the new version
     stored_chunk = cache.gpu_cache[chunk_v2.key]
-    assert torch.equal(stored_chunk.key_tensor, chunk_v2.key_tensor), \
+    # Verify new version by comparing layer 0's key tensor
+    stored_k, _ = stored_chunk.layer_kv[0]
+    new_k, _ = chunk_v2.layer_kv[0]
+    assert torch.equal(stored_k, new_k), \
         "Should store new version, not old"
     print(f"✓ New version correctly stored")
 
@@ -255,9 +254,7 @@ def test_initial_generation_with_recovery():
     new_chunk = KVChunk(
         session_id='session_1',
         chunk_id=next_id,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=next_id * 32,
         session_total_chunks=next_id + 1,
         num_layers=40,
@@ -327,9 +324,7 @@ def test_session_chunks_tracking():
     recovered = KVChunk(
         session_id='session_1',
         chunk_id=0,
-        layer_idx=0,
-        key_tensor=torch.randn(1, 32, 8, 64),
-        value_tensor=torch.randn(1, 32, 8, 64),
+        layer_kv={0: (torch.randn(1, 32, 8, 64), torch.randn(1, 32, 8, 64))},
         context_length=0,
         session_total_chunks=4,
         num_layers=40,
